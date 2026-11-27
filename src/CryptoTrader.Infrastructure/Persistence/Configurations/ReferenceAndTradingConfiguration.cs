@@ -48,6 +48,10 @@ internal sealed class InstrumentRowConfiguration : IEntityTypeConfiguration<Inst
         builder.Property(x => x.MinQuantity).HasColumnName("min_quantity");
         builder.Property(x => x.MinNotional).HasColumnName("min_notional");
         builder.Property(x => x.ContractMultiplier).HasColumnName("contract_multiplier");
+        builder.Property(x => x.ContractValue).HasColumnName("contract_value");
+        builder.Property(x => x.ContractValueCurrency).HasColumnName("contract_value_currency");
+        builder.Property(x => x.SettlementCurrency).HasColumnName("settlement_currency");
+        builder.Property(x => x.ContractKind).HasColumnName("contract_kind");
         builder.Property(x => x.IsTradingEnabled).HasColumnName("is_trading_enabled");
         builder.HasIndex(x => new { x.ExchangeId, x.ExchangeSymbol }).HasDatabaseName("ix_instruments_exchange_symbol");
     }

@@ -45,6 +45,14 @@ public sealed class BacktestEngine : IBacktestEngine
 
         var instrument = request.InstrumentSpec;
         var working = CandleWindow.Working(request.WorkingCandles, request.FromUtc, request.ToUtc);
+        foreach (var candle in working)
+        {
+            if (candle.VolumeUnit != VolumeUnit.BaseAsset)
+            {
+                throw new InvalidOperationException("BacktestEngine 0.1 accepts base-asset volume only.");
+            }
+        }
+
         var higher = CandleWindow.Higher(request.HigherCandles);
         var higherCloseOrdered = CandleWindow.IsCloseTimeOrdered(higher);
         var (stopMultiplier, takeMultiplier) = ExitMultiplierReader.Read(request.ParametersJson);

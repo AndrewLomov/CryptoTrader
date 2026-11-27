@@ -25,7 +25,7 @@ public sealed class BybitTradingClient : ITradingClient
         CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult<OrderStatusSnapshot?>(null);
+        throw new NotSupportedException("Bybit private order lookup is not implemented in CryptoTrader 0.1.");
     }
 
     public Task CancelAsync(InstrumentId instrument, string exchangeOrderId, CancellationToken cancellationToken)
@@ -37,12 +37,12 @@ public sealed class BybitTradingClient : ITradingClient
     public Task<IReadOnlyList<OrderStatusSnapshot>> GetOpenOrdersAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult<IReadOnlyList<OrderStatusSnapshot>>([]);
+        throw new NotSupportedException("Bybit private open orders are not implemented in CryptoTrader 0.1.");
     }
 
     public Task<IReadOnlyList<ExchangePositionSnapshot>> GetPositionsAsync(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult<IReadOnlyList<ExchangePositionSnapshot>>([]);
+        throw new NotSupportedException("Bybit private positions are not implemented in CryptoTrader 0.1.");
     }
 }

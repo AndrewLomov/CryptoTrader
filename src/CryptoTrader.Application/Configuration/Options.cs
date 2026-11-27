@@ -51,6 +51,15 @@ public sealed class RiskOptions
         AllowCrossMargin);
 }
 
+public sealed class MarketDataSubscriptionOptions
+{
+    public string Exchange { get; set; } = "";
+
+    public string Instrument { get; set; } = "";
+
+    public string[] Timeframes { get; set; } = [];
+}
+
 public sealed class MarketDataOptions
 {
     public const string SectionName = "MarketData";
@@ -60,6 +69,8 @@ public sealed class MarketDataOptions
     public bool UseClosedCandlesForStrategies { get; set; } = true;
 
     public int StaleAfterSeconds { get; set; } = 180;
+
+    public MarketDataSubscriptionOptions[] Subscriptions { get; set; } = [];
 }
 
 public sealed class PersistenceOptions
@@ -93,6 +104,43 @@ public sealed class BybitOptions
     public int TimeoutSeconds { get; set; } = 15;
 
     public int MaxRequestsPerSecond { get; set; } = 10;
+
+    public bool Enabled { get; set; } = true;
+
+    public int ChannelCapacity { get; set; } = 256;
+}
+
+/// <summary>
+/// Startup validation for the Okx configuration section. No API key, secret, or passphrase.
+/// The OKX adapter binds the same section name.
+/// </summary>
+public sealed class OkxOptions
+{
+    public const string SectionName = "Okx";
+
+    public bool Enabled { get; set; } = false;
+
+    public string RestBaseUrl { get; set; } = "https://openapi.okx.com";
+
+    public string PublicWebSocketUrl { get; set; } = "wss://ws.okx.com/ws/v5/public";
+
+    public string BusinessWebSocketUrl { get; set; } = "wss://ws.okx.com/ws/v5/business";
+
+    public int RequestTimeoutSeconds { get; set; } = 15;
+
+    public int MaxCandlesPerRequest { get; set; } = 300;
+
+    public int MaxHistoryCandlesPerRequest { get; set; } = 300;
+
+    public int MaxPages { get; set; } = 500;
+
+    public int ChannelCapacity { get; set; } = 256;
+
+    public int AckTimeoutSeconds { get; set; } = 10;
+
+    public int PingIntervalSeconds { get; set; } = 20;
+
+    public string[] InstrumentTypes { get; set; } = ["SPOT", "SWAP"];
 }
 
 public sealed class ObservabilityOptions

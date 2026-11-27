@@ -9,6 +9,8 @@ public readonly record struct ExchangeId
 
     public static ExchangeId Bybit { get; } = new("BYBIT");
 
+    public static ExchangeId Okx { get; } = new("OKX");
+
     public string Value { get; }
 
     public override string ToString() => Value;

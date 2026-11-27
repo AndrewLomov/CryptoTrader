@@ -8,6 +8,7 @@ using CryptoTrader.Exchanges.Abstractions;
 using CryptoTrader.Exchanges.Abstractions.MarketData;
 using CryptoTrader.Exchanges.Abstractions.Models;
 using CryptoTrader.Exchanges.Bybit;
+using CryptoTrader.Exchanges.Bybit.Accounts;
 using CryptoTrader.Exchanges.Bybit.Trading;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -53,6 +54,20 @@ public class BybitContractTests
     }
 
     [Fact]
+    public async Task Private_reads_throw_instead_of_returning_an_empty_success()
+    {
+        var trading = new BybitTradingClient();
+        var account = new BybitAccountClient();
+        var instrument = new InstrumentId("BYBIT-SPOT-BTCUSDT");
+
+        await Should.ThrowAsync<NotSupportedException>(() => trading.GetOrderAsync(instrument, "client-1", CancellationToken.None));
+        await Should.ThrowAsync<NotSupportedException>(() => trading.GetOpenOrdersAsync(CancellationToken.None));
+        await Should.ThrowAsync<NotSupportedException>(() => trading.GetPositionsAsync(CancellationToken.None));
+        await Should.ThrowAsync<NotSupportedException>(() => trading.CancelAsync(instrument, "exchange-1", CancellationToken.None));
+        await Should.ThrowAsync<NotSupportedException>(() => account.GetAccountAsync(CancellationToken.None));
+    }
+
+    [Fact]
     public async Task Kline_numeric_strings_parse_to_decimal_and_utc()
     {
         var expectedOpen = DateTimeOffset.FromUnixTimeMilliseconds(1_704_067_200_000);
@@ -70,11 +85,18 @@ public class BybitContractTests
             Timeout = TimeSpan.FromSeconds(2),
         };
         var client = CreateMarketDataClient(http);
+        var instrument = new InstrumentId("BYBIT-SPOT-BTCUSDT");
         var candles = await client.GetCandlesAsync(
-            new InstrumentId("BYBIT-SPOT-BTCUSDT"),
+            instrument,
             Timeframe.OneHour,
             expectedOpen,
-            expectedOpen.AddHours(2),
+            expectedOpen.AddHours(1),
+            CancellationToken.None);
+        var history = await client.GetCandleHistoryAsync(
+            instrument,
+            Timeframe.OneHour,
+            expectedOpen,
+            expectedOpen.AddHours(1),
             CancellationToken.None);
 
         handler.Calls.ShouldBeGreaterThan(0);
@@ -83,7 +105,38 @@ public class BybitContractTests
             request.RequestUri.ShouldNotBeNull();
             request.RequestUri!.Host.ShouldBe("127.0.0.1");
         }
+
+        history.Completeness.ShouldBe(CandleHistoryCompleteness.Complete);
+        AssertCandle(history.Candles, expectedOpen);
         AssertCandle(candles, expectedOpen);
+    }
+
+    [Fact]
+    public async Task Incomplete_kline_range_throws()
+    {
+        var expectedOpen = DateTimeOffset.FromUnixTimeMilliseconds(1_704_067_200_000);
+        var handler = new RecordingHandler(KlineJson);
+        using var http = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://127.0.0.1:9/"),
+            Timeout = TimeSpan.FromSeconds(2),
+        };
+        var client = CreateMarketDataClient(http);
+
+        var error = await Should.ThrowAsync<IncompleteCandleHistoryException>(() => client.GetCandlesAsync(
+            new InstrumentId("BYBIT-SPOT-BTCUSDT"),
+            Timeframe.OneHour,
+            expectedOpen,
+            expectedOpen.AddHours(2),
+            CancellationToken.None));
+
+        error.Message.ShouldNotBeNullOrWhiteSpace();
+        handler.Calls.ShouldBeGreaterThan(0);
+        foreach (var request in handler.Requests)
+        {
+            request.RequestUri.ShouldNotBeNull();
+            request.RequestUri!.Host.ShouldBe("127.0.0.1");
+        }
     }
 
     private static void AssertCandle(IReadOnlyList<Candle> candles, DateTimeOffset expectedOpen)

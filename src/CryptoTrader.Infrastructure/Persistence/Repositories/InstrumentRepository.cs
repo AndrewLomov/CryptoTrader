@@ -87,6 +87,10 @@ internal sealed class InstrumentRepository : IInstrumentRepository
         MinQuantity = instrument.MinQuantity,
         MinNotional = instrument.MinNotional,
         ContractMultiplier = instrument.ContractMultiplier,
+        ContractValue = instrument.ContractValue,
+        ContractValueCurrency = instrument.ContractValueCurrency,
+        SettlementCurrency = instrument.SettlementCurrency,
+        ContractKind = instrument.ContractKind,
         IsTradingEnabled = instrument.IsTradingEnabled,
     };
 
@@ -102,6 +106,10 @@ internal sealed class InstrumentRepository : IInstrumentRepository
         row.MinQuantity = instrument.MinQuantity;
         row.MinNotional = instrument.MinNotional;
         row.ContractMultiplier = instrument.ContractMultiplier;
+        row.ContractValue = instrument.ContractValue;
+        row.ContractValueCurrency = instrument.ContractValueCurrency;
+        row.SettlementCurrency = instrument.SettlementCurrency;
+        row.ContractKind = instrument.ContractKind;
         row.IsTradingEnabled = instrument.IsTradingEnabled;
     }
 
@@ -117,5 +125,9 @@ internal sealed class InstrumentRepository : IInstrumentRepository
         row.MinQuantity,
         row.MinNotional,
         row.ContractMultiplier,
-        row.IsTradingEnabled);
+        row.IsTradingEnabled,
+        row.ContractValue,
+        row.ContractValueCurrency,
+        row.SettlementCurrency,
+        row.ContractKind);
 }

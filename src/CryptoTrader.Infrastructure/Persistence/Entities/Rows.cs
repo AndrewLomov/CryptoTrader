@@ -46,6 +46,14 @@ public sealed class InstrumentRow
 
     public decimal? ContractMultiplier { get; set; }
 
+    public decimal? ContractValue { get; set; }
+
+    public string? ContractValueCurrency { get; set; }
+
+    public string? SettlementCurrency { get; set; }
+
+    public string? ContractKind { get; set; }
+
     public bool IsTradingEnabled { get; set; }
 }
 
@@ -86,7 +94,32 @@ public sealed class CandleRow
 
     public decimal Volume { get; set; }
 
+    public int VolumeUnit { get; set; } = 1;
+
+    public decimal? QuoteVolume { get; set; }
+
+    public decimal? BaseVolume { get; set; }
+
     public bool IsClosed { get; set; }
+}
+
+public sealed class CandleConsumerCheckpointRow
+{
+    public required string ExchangeId { get; set; }
+
+    public required string InstrumentId { get; set; }
+
+    public required string Timeframe { get; set; }
+
+    public DateTimeOffset OpenTimeUtc { get; set; }
+
+    public required string Consumer { get; set; }
+
+    public int State { get; set; }
+
+    public string? SkipReason { get; set; }
+
+    public DateTimeOffset UpdatedAtUtc { get; set; }
 }
 
 public sealed class MarketTradeRow
@@ -516,6 +549,19 @@ public sealed class PaperAccountRow
     public required string MarksJson { get; set; }
 
     public required string AppliedExchangeTradeIdsJson { get; set; }
+
+    public string AppliedCandleKeysJson { get; set; } = "[]";
+
+    public DateTimeOffset UpdatedAtUtc { get; set; }
+}
+
+public sealed class PaperTradingControlRow
+{
+    public int Id { get; set; }
+
+    public bool EmergencyStop { get; set; }
+
+    public string? Reason { get; set; }
 
     public DateTimeOffset UpdatedAtUtc { get; set; }
 }

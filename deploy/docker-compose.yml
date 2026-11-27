@@ -38,6 +38,9 @@ services:
     env_file:
       - .env
     environment:
+      # Public OKX needs no API key. These optional names are unset:
+      # Okx__Enabled, Okx__RestBaseUrl, Okx__PublicWebSocketUrl.
+      # Do not add an OKX API key, secret, or passphrase.
       Persistence__ApplyMigrationsOnStartup: "true"
       Persistence__ConnectionString: "Host=postgres;Port=5432;Database=${POSTGRES_DB};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}"
       Execution__Mode: Paper

@@ -8,6 +8,7 @@
     <ProjectReference Include="..\CryptoTrader.Infrastructure\CryptoTrader.Infrastructure.csproj" />
     <ProjectReference Include="..\CryptoTrader.Contracts\CryptoTrader.Contracts.csproj" />
     <ProjectReference Include="..\CryptoTrader.Exchanges.Bybit\CryptoTrader.Exchanges.Bybit.csproj" />
+    <ProjectReference Include="..\CryptoTrader.Exchanges.Okx\CryptoTrader.Exchanges.Okx.csproj" />
     <ProjectReference Include="..\CryptoTrader.Strategies.TrendFollowing\CryptoTrader.Strategies.TrendFollowing.csproj" />
     <ProjectReference Include="..\CryptoTrader.Backtesting\CryptoTrader.Backtesting.csproj" />
   </ItemGroup>

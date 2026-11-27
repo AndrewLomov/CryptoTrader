@@ -6,6 +6,7 @@ using CryptoTrader.Application.Backtesting;
 using CryptoTrader.Contracts.Requests;
 using CryptoTrader.Contracts.Responses;
 using CryptoTrader.Domain.Trading;
+using CryptoTrader.Exchanges.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace CryptoTrader.Host.Api;
@@ -17,8 +18,14 @@ internal static class TradingApiExtensions
         ArgumentNullException.ThrowIfNull(app);
         var api = app.MapGroup("/api/v1");
 
-        api.MapGet("/exchanges", (IOptions<ExecutionOptions> execution) =>
-            Results.Ok(ContractMapper.Exchanges(execution.Value.Mode)));
+        api.MapGet("/exchanges", (IExchangeRegistry registry, IOptions<ExecutionOptions> execution) =>
+        {
+            var codes = registry.GetAll()
+                .Select(adapter => adapter.ExchangeCode)
+                .OrderBy(code => code, StringComparer.Ordinal)
+                .ToArray();
+            return Results.Ok(ContractMapper.Exchanges(codes, execution.Value.Mode));
+        });
 
         api.MapGet("/instruments", async (
             CandleAdminService candles,
@@ -172,13 +179,33 @@ internal static class TradingApiExtensions
             return Results.Ok(ContractMapper.ToResponse(report, symbols));
         });
 
+        api.MapGet("/paper-accounts", async (PaperTradingCoordinator paper, CancellationToken cancellationToken) =>
+        {
+            var accounts = await paper.ListAccountsAsync(cancellationToken);
+            return Results.Ok(new PaperAccountListResponse(accounts.Select(account => new PaperAccountResponse(
+                account.AccountId,
+                account.Exchange,
+                account.QuoteAsset,
+                account.Cash,
+                account.Equity,
+                account.DailyPnl,
+                account.DrawdownFraction,
+                account.EmergencyStop,
+                account.OpenPositions)).ToArray()));
+        });
+
         api.MapGet("/orders", async (
             PaperTradingCoordinator paper,
             CandleAdminService candles,
             [AsParameters] GetOrdersQuery query,
             CancellationToken cancellationToken) =>
         {
-            var snapshot = await paper.GetSnapshotAsync(query.AccountId, ParseMode(query.TradingMode), cancellationToken);
+            var snapshot = await paper.GetSnapshotAsync(
+                query.AccountId,
+                ParseMode(query.TradingMode),
+                query.Exchange,
+                query.QuoteAsset,
+                cancellationToken);
             var symbols = ContractMapper.Symbols(await candles.ListInstrumentsAsync(null, null, cancellationToken));
             return Results.Ok(new OrderListResponse(snapshot.Orders.Select(order => ContractMapper.ToResponse(order, symbols)).ToArray()));
         });
@@ -189,7 +216,7 @@ internal static class TradingApiExtensions
             [AsParameters] GetPositionsQuery query,
             CancellationToken cancellationToken) =>
         {
-            var snapshot = await paper.GetSnapshotAsync(query.AccountId, null, cancellationToken);
+            var snapshot = await paper.GetSnapshotAsync(query.AccountId, null, query.Exchange, query.QuoteAsset, cancellationToken);
             var symbols = ContractMapper.Symbols(await candles.ListInstrumentsAsync(null, null, cancellationToken));
             return Results.Ok(new PositionListResponse(snapshot.Positions.Select(position => ContractMapper.ToResponse(position, symbols)).ToArray()));
         });
@@ -205,7 +232,22 @@ internal static class TradingApiExtensions
                 request = await http.ReadFromJsonAsync<EmergencyStopRequest>(cancellationToken);
             }
 
-            var outcome = await paper.EngageEmergencyStopAsync(request?.Reason, cancellationToken);
+            var outcome = await paper.EngageEmergencyStopAsync(request?.Reason, request?.Exchange, request?.QuoteAsset, cancellationToken);
+            return Results.Ok(new EmergencyStopResponse(outcome.EmergencyStop, outcome.OccurredAtUtc));
+        });
+
+        api.MapPost("/risk/emergency-stop/release", async (
+            HttpRequest http,
+            PaperTradingCoordinator paper,
+            CancellationToken cancellationToken) =>
+        {
+            EmergencyStopRequest? request = null;
+            if (http.ContentLength is > 0)
+            {
+                request = await http.ReadFromJsonAsync<EmergencyStopRequest>(cancellationToken);
+            }
+
+            var outcome = await paper.ReleaseEmergencyStopAsync(request?.Exchange, request?.QuoteAsset, cancellationToken);
             return Results.Ok(new EmergencyStopResponse(outcome.EmergencyStop, outcome.OccurredAtUtc));
         });
 

@@ -41,3 +41,16 @@ public sealed record PositionResponse(
 public sealed record PositionListResponse(IReadOnlyList<PositionResponse> Items);
 
 public sealed record EmergencyStopResponse(bool EmergencyStop, DateTimeOffset OccurredAtUtc);
+
+public sealed record PaperAccountResponse(
+    Guid AccountId,
+    string Exchange,
+    string QuoteAsset,
+    decimal Cash,
+    decimal Equity,
+    decimal DailyPnl,
+    decimal DrawdownFraction,
+    bool EmergencyStop,
+    int OpenPositions);
+
+public sealed record PaperAccountListResponse(IReadOnlyList<PaperAccountResponse> Items);

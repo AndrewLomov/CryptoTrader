@@ -23,6 +23,7 @@ internal sealed class PaperStateRepository : IPaperStateRepository
         ArgumentNullException.ThrowIfNull(state.Positions);
         ArgumentNullException.ThrowIfNull(state.AppliedExchangeTradeIds);
         ArgumentNullException.ThrowIfNull(state.MarksByInstrument);
+        ArgumentNullException.ThrowIfNull(state.AppliedCandleKeys);
         await ExchangeCatalog.EnsureAsync(_db, state.Exchange.Value, cancellationToken);
         var accountId = state.AccountId.Value;
         var row = await _db.PaperAccounts.FirstOrDefaultAsync(item => item.AccountId == accountId, cancellationToken);
@@ -61,6 +62,7 @@ internal sealed class PaperStateRepository : IPaperStateRepository
             .Select(pair => new MarkDocument { InstrumentId = pair.Key.Value, Mark = pair.Value })
             .ToArray()),
         AppliedExchangeTradeIdsJson = PersistenceJson.Serialize(state.AppliedExchangeTradeIds.ToArray()),
+        AppliedCandleKeysJson = PersistenceJson.Serialize(state.AppliedCandleKeys.ToArray()),
         UpdatedAtUtc = state.UpdatedAtUtc,
     };
 
@@ -78,6 +80,7 @@ internal sealed class PaperStateRepository : IPaperStateRepository
         row.PositionsJson = mapped.PositionsJson;
         row.MarksJson = mapped.MarksJson;
         row.AppliedExchangeTradeIdsJson = mapped.AppliedExchangeTradeIdsJson;
+        row.AppliedCandleKeysJson = mapped.AppliedCandleKeysJson;
         row.UpdatedAtUtc = mapped.UpdatedAtUtc;
     }
 
@@ -86,6 +89,9 @@ internal sealed class PaperStateRepository : IPaperStateRepository
         var positions = PersistenceJson.DeserializeRequired<List<PaperPositionDocument>>(row.PositionsJson, "positions");
         var marks = PersistenceJson.DeserializeRequired<List<MarkDocument>>(row.MarksJson, "marks");
         var tradeIds = PersistenceJson.DeserializeRequired<List<string>>(row.AppliedExchangeTradeIdsJson, "applied_exchange_trade_ids");
+        var candleKeys = string.IsNullOrWhiteSpace(row.AppliedCandleKeysJson)
+            ? []
+            : PersistenceJson.DeserializeRequired<List<string>>(row.AppliedCandleKeysJson, "applied_candle_keys");
         var markMap = new Dictionary<InstrumentId, decimal>(marks.Count);
         foreach (var mark in marks)
         {
@@ -105,7 +111,8 @@ internal sealed class PaperStateRepository : IPaperStateRepository
             positions.Select(ToPositionState).ToArray(),
             tradeIds,
             markMap,
-            row.UpdatedAtUtc);
+            row.UpdatedAtUtc,
+            candleKeys);
     }
 
     private static PaperPositionDocument ToPositionDocument(PaperPositionState position) => new()

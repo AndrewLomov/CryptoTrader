@@ -7,6 +7,7 @@
     <Project Path="src/CryptoTrader.Application/CryptoTrader.Application.csproj" />
     <Project Path="src/CryptoTrader.Infrastructure/CryptoTrader.Infrastructure.csproj" />
     <Project Path="src/CryptoTrader.Exchanges.Bybit/CryptoTrader.Exchanges.Bybit.csproj" />
+    <Project Path="src/CryptoTrader.Exchanges.Okx/CryptoTrader.Exchanges.Okx.csproj" />
     <Project Path="src/CryptoTrader.Strategies.TrendFollowing/CryptoTrader.Strategies.TrendFollowing.csproj" />
     <Project Path="src/CryptoTrader.Backtesting/CryptoTrader.Backtesting.csproj" />
     <Project Path="src/CryptoTrader.Host/CryptoTrader.Host.csproj" />

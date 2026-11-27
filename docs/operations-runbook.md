@@ -2,6 +2,24 @@
 
 Команды Compose выполняются в каталоге `deploy`, где лежат `docker-compose.yml` и `.env`. Live-торговля остаётся выключенной: `Execution__LiveTradingEnabled=false`, режим `Paper`. Эти значения в Compose перекрывают `.env`. Включать их для «проверки связи с биржей» нельзя: процесс с live-конфигурацией не стартует, а приватные заявки в 0.1 не реализованы.
 
+## Состояние дерева
+
+Снимок ветки `feature/okx-multi-exchange`. Метки: Implemented, Partially Implemented, Not Implemented. Стек для этой сверки не запускался.
+
+| Область | Статус |
+|---|---|
+| Публичные рыночные данные Bybit | Implemented |
+| Публичный адаптер OKX | Implemented |
+| Live-торговля | Not Implemented |
+| Приватный OKX | Not Implemented |
+| `GET /health/live` | Implemented |
+| `GET /health/ready` | Implemented |
+| `GET /health/feeds` | Implemented |
+
+Процесс регистрирует Bybit и OKX (`AddBybit`, `AddOkx`) и выбирает адаптер через `IExchangeRegistry`. Публичный Bybit и публичный OKX API-ключ не используют. Приватный OKX не реализован. Compose ключи бирж в контейнер не передаёт.
+
+Секреты остаются вне git и логов. В сообщения не копируют строку подключения и `Api__AdminApiKey`. `RedactingJsonFormatter` отбрасывает свойства, в имени которых есть key, secret, token, password или signature.
+
 ## Состояние
 
 ```text
@@ -11,7 +29,7 @@ docker compose logs --tail 200 postgres
 docker compose logs -f cryptotrader
 ```
 
-Логи приложения пишет Serilog в stdout контейнера. Поля, в имени которых есть key, secret, token, password или signature, маскируются. Строку подключения и `Api__AdminApiKey` в сообщения не копируют. Ключ Bybit в этот контур не передаётся.
+Логи приложения пишет Serilog в stdout контейнера. Поля, в имени которых есть key, secret, token, password или signature, маскируются. Имя passphrase само по себе эта маска не ловит. Строку подключения и `Api__AdminApiKey` в сообщения не копируют. Ключ Bybit и ключ OKX в этот контур не передаются.
 
 Политика `restart: unless-stopped` поднимает контейнеры после перезапуска демона. Она не меняет флаги live.
 
@@ -21,8 +39,9 @@ docker compose logs -f cryptotrader
 
 | URL | Что означает успешный ответ |
 |---|---|
-| http://127.0.0.1:8080/health/live | Процесс обслуживает HTTP |
-| http://127.0.0.1:8080/health/ready | PostgreSQL доступен |
+| http://127.0.0.1:8080/health/live | Implemented. Процесс обслуживает HTTP |
+| http://127.0.0.1:8080/health/ready | Implemented. PostgreSQL доступен |
+| http://127.0.0.1:8080/health/feeds | Implemented. Состояние подписок market data, без ключа API |
 | http://127.0.0.1:8080/metrics | Текст Prometheus |
 
 ```text
@@ -44,7 +63,16 @@ docker compose ps postgres
 docker compose logs --tail 100 postgres
 ```
 
-Миграции применяются на старте приложения, потому что `Persistence__ApplyMigrationsOnStartup=true`. Отдельный job migrate не запускают. После восстановления базы снова дождитесь успешного `/health/ready`.
+Миграции применяет сам Host, когда `Persistence__ApplyMigrationsOnStartup=true`. В `appsettings.json` это поле равно `false`. Compose задаёт `true` в `environment` и перекрывает `.env`. Отдельный job migrate не запускают.
+
+Порядок на старте контейнера `cryptotrader`:
+
+1. `depends_on` ждёт `pg_isready` у сервиса `postgres`.
+2. Пока флаг истинный, `Program.cs` до `app.Run` вызывает `CryptoTrader.Host.Persistence.DatabaseMigrator.ApplyAsync`.
+3. `AddPersistence` регистрирует `PersistenceMigrationHostedService`. Его `StartingAsync` при том же флаге вызывает `CryptoTrader.Infrastructure.Persistence.DatabaseMigrator.ApplyAsync`, а тот — `Database.MigrateAsync`.
+4. Второй проход применяет только миграции, которых ещё нет в `__EFMigrationsHistory`.
+
+Стек для описания этого порядка не запускался. После восстановления базы снова дождитесь успешного `/health/ready`.
 
 ## Резервная копия
 
@@ -150,7 +178,7 @@ docker compose stop postgres
 
 ## Bybit недоступен
 
-Процесс не останавливают. `/health/live` остаётся проверкой процесса, `/health/ready` остаётся проверкой PostgreSQL. Пока база здорова, неготовый WebSocket Bybit сам по себе приложение не валит.
+Процесс не останавливают. `/health/live` остаётся проверкой процесса, `/health/ready` остаётся проверкой PostgreSQL. Пока база здорова, неготовый WebSocket сам по себе приложение не валит. `GET /health/feeds` показывает состояние подписок. Обрыв Bybit не останавливает OKX и не закрывает paper-позиции другой биржи.
 
 Новые paper-входы ждут свежих данных. Риск-менеджер отклоняет сигнал, пока рынок помечен устаревшим или биржа нездорова (`StaleMarketData`, `ExchangeUnhealthy`). Окно устаревания по умолчанию — `MarketData:StaleAfterSeconds` = 180. Уже записанные paper-позиции на биржу не отправляются и сами не закрываются.
 
@@ -169,3 +197,12 @@ docker compose restart cryptotrader
 ```
 
 Перезапуск не включает live и не удаляет том PostgreSQL. Готовность снова смотрят по `/health/ready`.
+
+## Ручная проверка публичного OKX
+
+В CI этого вызова нет. Ключ биржи не нужен и в запрос его не подставляют.
+
+1. `GET https://openapi.okx.com/api/v5/public/instruments?instType=SPOT` — в `data` есть `BTC-USDT`, `state` читается как есть.
+2. `GET https://openapi.okx.com/api/v5/market/ticker?instId=BTC-USDT` — `last` положительный.
+3. `GET https://openapi.okx.com/api/v5/market/books?instId=BTC-USDT&sz=50` — снимок, не доказанная непрерывная книга.
+4. После запуска стека с `Okx:Enabled=true` и подпиской `OKX` / `BTC-USDT` / `1m`: `GET /health/feeds` без ключа показывает подписку, `GET /api/v1/paper-accounts` с `X-Api-Key` показывает счёт OKX только после закрытой допустимой свечи. Приватные пути OKX не вызывают.

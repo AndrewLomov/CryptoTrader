@@ -55,6 +55,10 @@ public sealed record OrderBookSnapshot
 
     public long? Sequence { get; }
 
+    /// <summary>
+    /// True when this snapshot's own levels parsed. It does not mean a sequence of deltas was applied
+    /// without a gap. Callers that need a continuous book must not treat a parsed snapshot as one.
+    /// </summary>
     public bool IsConsistent { get; }
 
     public DateTimeOffset ExchangeTimeUtc { get; }

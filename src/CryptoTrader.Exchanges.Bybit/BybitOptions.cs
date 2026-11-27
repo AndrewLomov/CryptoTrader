@@ -10,6 +10,10 @@ public sealed class BybitOptions
 
     public const string HttpClientName = "bybit";
 
+    public bool Enabled { get; set; } = true;
+
+    public int ChannelCapacity { get; set; } = 256;
+
     public string RestBaseUrl { get; set; } = "https://api.bybit.com";
 
     public string SpotWebSocketUrl { get; set; } = "wss://stream.bybit.com/v5/public/spot";

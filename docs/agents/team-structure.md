@@ -1,34 +1,32 @@
-# Команда CryptoTrader 0.1
+# Команда CryptoTrader — multi-exchange и OKX
 
-Lead Agent — архитектор интеграции и технический руководитель. Он утверждает контракты, распределяет файлы и принимает итоговый результат.
+Lead Agent утверждает контракты и интегрирует результат. Субагенты запущены через механизм Task. Общее рабочее дерево одно: изолированные worktree не использовались, потому что параллельные роли делят репозиторий, а не конкурируют за один и тот же результат. У каждого файла один владелец.
 
-Субагенты запускаются через механизм Task платформы Cursor. Это отдельные исполнители, а не ролевая имитация в одном контексте. Изолированные git worktree не используются: параллельная работа идёт в одном рабочем дереве с единственным владельцем каждого файла. Общие контракты после утверждения не меняются исполнителем модуля.
+Нормативный контракт этой итерации: `docs/agents/multi-exchange-contract.md`. Решения версии 0.1 ниже остаются в силе.
 
 ## Состав
 
 | Agent | Роль | Владеет файлами |
 |---|---|---|
-| Senior .NET Architect | Архитектура, Domain, порты, ADR | `src/CryptoTrader.Domain/**`, `src/CryptoTrader.Contracts/**`, `src/CryptoTrader.Exchanges.Abstractions/**`, `src/CryptoTrader.Strategies.Abstractions/**`, `src/CryptoTrader.Application/Abstractions/**`, `src/CryptoTrader.Application/Configuration/**`, `tests/CryptoTrader.Architecture.Tests/**`, `*.csproj`, `CryptoTrader.slnx`, `Directory.Build.props`, `Directory.Packages.props`, `global.json`, `.editorconfig`, `.gitignore`, `docs/architecture.md`, `docs/adr/**` |
-| Senior C# Developer | Application, Risk Manager, API, composition root | `src/CryptoTrader.Application/**` кроме `Abstractions` и `Configuration`, `src/CryptoTrader.Host/**`, `docs/api.md` |
-| Quantitative Developer | Индикаторы, стратегия, backtesting | `src/CryptoTrader.Strategies.TrendFollowing/**`, `src/CryptoTrader.Backtesting/**`, `docs/trading-strategy.md` |
-| Algorithmic Trading Systems Engineer | Bybit и Paper Execution | `src/CryptoTrader.Exchanges.Bybit/**`, `src/CryptoTrader.Infrastructure/Paper/**`, `src/CryptoTrader.Infrastructure/MarketData/**`, `docs/exchange-integration.md` |
-| Database Engineer | PostgreSQL, EF Core, миграции | `src/CryptoTrader.Infrastructure/Persistence/**`, `docs/database-schema.md`, `deploy/postgres/**` |
-| QA Automation Engineer | Тесты и приёмка | `tests/**` кроме `CryptoTrader.Architecture.Tests`, `docs/testing-strategy.md`, `docs/agents/review-reports/**` |
-| DevOps Engineer | Сборка, контейнеры, эксплуатация | `deploy/Dockerfile`, `deploy/docker-compose.yml`, `deploy/.env.example`, `deploy/scripts/**`, `.github/**`, `docs/deployment.md`, `docs/operations-runbook.md`, `docs/security.md` |
+| 1 Senior .NET Architect | Контракты, Domain, реестр, ADR | `src/CryptoTrader.Domain/**`, `src/CryptoTrader.Exchanges.Abstractions/**`, `src/CryptoTrader.Application/Configuration/**`, `src/CryptoTrader.Application/Abstractions/**`, `src/CryptoTrader.Application/DependencyInjection/ApplicationOptionsReader.cs`, `src/CryptoTrader.Application/DependencyInjection/ApplicationServiceCollectionExtensions.cs`, `docs/architecture.md`, `docs/adr/011-*`, `docs/adr/012-*`, новые тесты реестра в `tests/CryptoTrader.Architecture.Tests/ExchangeRegistryTests.cs`, доменные тесты новых полей |
+| 2 Senior C# Developer | Host, ingestion, admin sync | `src/CryptoTrader.Host/**`, `src/CryptoTrader.Application/MarketData/CandleAdminService.cs`, точечная защита в `src/CryptoTrader.Application/Paper/PaperTradingCoordinator.cs`, `src/CryptoTrader.Contracts/Responses/FeedHealthResponses.cs` |
+| 3 Quantitative Developer | Семантика объёма и запрет SWAP в spot backtest | `docs/market-data-semantics.md`, `src/CryptoTrader.Backtesting/**`, `tests/CryptoTrader.Backtesting.Tests/**` |
+| 4 Algorithmic Trading Systems Engineer | Bybit regression и OKX adapter | `src/CryptoTrader.Exchanges.Bybit/**`, `src/CryptoTrader.Exchanges.Okx/**`, `CryptoTrader.slnx`, словарь ссылок в `tests/CryptoTrader.Architecture.Tests/DependencyRuleTests.cs`, `docs/okx-integration.md`, `docs/exchange-integration.md` |
+| 5 Database Engineer | Схема и checkpoint | `src/CryptoTrader.Infrastructure/Persistence/**`, `docs/database-schema.md`, `deploy/postgres/**` |
+| 6 QA Automation Engineer | Тесты и верификация аудита | `tests/**` кроме файлов Agent 1 и словаря `DependencyRuleTests`, `docs/testing-strategy.md`, `docs/agents/audit-verification.md` |
+| 7 DevOps Engineer | CI, Docker, эксплуатация | `.github/**`, `deploy/Dockerfile`, `deploy/docker-compose.yml`, `deploy/.env.example`, `deploy/scripts/**`, `README.md`, `docs/deployment.md`, `docs/operations-runbook.md`, `docs/security.md` |
+| 8 OKX V5 API Specialist | Официальная спецификация и fixtures | `docs/okx-api-reference-notes.md`, `tests/CryptoTrader.Exchanges.ContractTests/Fixtures/Okx/**` |
 
-`src/CryptoTrader.Infrastructure/DependencyInjection.cs` собирает Lead после появления модулей Persistence и Paper, если владельцы не предоставят собственные методы расширения `AddPersistence` и `AddPaperExecution`.
+`DependencyRuleTests` меняет только Agent 4. Остальные архитектурные тесты не переписывать.
 
-## Уже принятые решения Lead
+## Решения 0.1, которые остаются
 
-Они обязательны для всех агентов и зафиксированы в `docs/agents/integration-contracts.md` и ADR.
-
-1. Modular monolith и Clean Architecture. CQRS и Mediator не внедряются.
-2. Live Trading в 0.1 недоступен. `Execution:LiveTradingEnabled=true` или `Risk:AllowFuturesLive=true` останавливают запуск.
-3. Bybit подключается собственным REST/WebSocket-клиентом на публичных методах V5. SDK биржи не подключается, пока не понадобится приватная торговля.
-4. Bybit-клиент заявок не выполняет сетевой вызов, пока Live выключен.
-5. Финансовая арифметика — `decimal`. Время — `DateTimeOffset` UTC. Проценты в конфигурации задаются как `0.5` = 0,5%.
-6. Backtest и Paper используют доменный `PortfolioLedger` и один `IRiskManager`.
-7. В одной свече одновременное касание Stop Loss и Take Profit закрывается по Stop Loss.
-8. Сигнал строится только по закрытым свечам. Вход в backtest — открытие следующей свечи с неблагоприятным проскальзыванием.
-9. Готовность приложения (`/health/ready`) зависит от PostgreSQL. Недоступность биржи блокирует новые сделки и не валит весь процесс.
-10. Управляющие и читающие `/api/*` требуют заголовок `X-Api-Key`. Health-эндпоинты публичные.
+1. Модульный монолит. CQRS и Mediator не внедряются.
+2. Live Trading выключен. `Execution:LiveTradingEnabled=true` или `Risk:AllowFuturesLive=true` останавливают запуск.
+3. Биржевые клиенты — собственный REST/WebSocket. SDK биржи не подключается.
+4. Клиент заявок не выполняет сетевой вызов создания или отмены ордера.
+5. Финансовая арифметика — `decimal`. Время — `DateTimeOffset` UTC. Процент `0.5` означает 0,5%.
+6. Backtest и Paper используют доменный `PortfolioLedger`. Paper по-прежнему ведёт только spot Bybit.
+7. Сигнал строится только по закрытым свечам.
+8. Готовность `/health/ready` зависит от PostgreSQL. Биржа не валит весь процесс.
+9. `/api/*` требует `X-Api-Key`. Health-эндпоинты публичные.

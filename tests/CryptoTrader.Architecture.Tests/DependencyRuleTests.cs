@@ -26,6 +26,7 @@ public class DependencyRuleTests
             ],
             ["CryptoTrader.Infrastructure"] = ["CryptoTrader.Domain", "CryptoTrader.Application"],
             ["CryptoTrader.Exchanges.Bybit"] = ["CryptoTrader.Exchanges.Abstractions"],
+            ["CryptoTrader.Exchanges.Okx"] = ["CryptoTrader.Exchanges.Abstractions"],
             ["CryptoTrader.Strategies.TrendFollowing"] = ["CryptoTrader.Domain", "CryptoTrader.Strategies.Abstractions"],
             ["CryptoTrader.Backtesting"] =
             [
@@ -39,6 +40,7 @@ public class DependencyRuleTests
                 "CryptoTrader.Infrastructure",
                 "CryptoTrader.Contracts",
                 "CryptoTrader.Exchanges.Bybit",
+                "CryptoTrader.Exchanges.Okx",
                 "CryptoTrader.Strategies.TrendFollowing",
                 "CryptoTrader.Backtesting",
             ],

@@ -1,0 +1,53 @@
+# Итог ревью, 27 ноября 2026
+
+Независимая проверка правок поверх `79367b2`. Исторические отчёты агентов выше по файлам описывают дерево до этих правок. Этот файл их не заменяет.
+
+## Что закрыто
+
+| Пункт | Результат |
+|---|---|
+| P1.1 устаревшие свечи | Допуск общий. История пишется. Paper не меняется. `Skipped` терминальный |
+| P1.2 раздельные счета | Пара биржа и котировка. Bybit и OKX не делят cash |
+| P2.1 `.vs` | Снят с индекса, правило `.gitignore` остаётся |
+| P2.2 типы инструментов | Обрезка, верхний регистр, дубликат и неизвестный тип отвергаются |
+| P2.3 приватные чтения | `NotSupportedException` на обеих биржах. `SubmitAsync` без HTTP |
+| P2.4 документы | Статусы приведены к коду. Host ссылается на OKX |
+| P2.5 формат | BOM снят, job `format` обязательный. `TreatWarningsAsErrors` не включали |
+| P2.6 стакан | Снимок `books5` и REST 50. Непрерывность не заявляется |
+| Checkpoint | `Processed` и `Skipped` не переоткрываются. Fill идемпотентен |
+
+## Готовность
+
+| Контур | Статус |
+|---|---|
+| Paper spot Bybit | Implemented |
+| Paper spot OKX | Implemented |
+| OKX Demo Trading | Not Implemented |
+| Учёт фьючерсов | Not Implemented |
+| Новые стратегии | Not Implemented |
+| Инкрементальный стакан | Not Implemented |
+
+Реальные деньги не используются. Прибыльность не оценивалась. Один gauge equity показывает последний обновлённый счёт. Cash и позиции при этом лежат в разных строках `paper_accounts`.
+
+Локальный прогон 27 ноября 2026, Release, до коммита:
+
+| Команда | Результат |
+|---|---|
+| `dotnet test CryptoTrader.slnx -c Release --filter Category!=Integration` | 99 passed, 0 failed. Domain 28, Strategies 5, Application 25, Backtesting 5, Architecture 13, Contract 23 |
+| `dotnet test CryptoTrader.slnx -c Release --filter Category=Integration` | 5 passed, 0 failed. PostgreSQL 16 через Testcontainers |
+| `dotnet format CryptoTrader.slnx --verify-no-changes` | код 0 |
+
+Удалённый прогон GitHub Actions для `b198d9b` наблюдался зелёным. Оба запуска завершились `success`: job `format`, `build and unit tests` и `integration tests`.
+
+- https://github.com/AndrewLomov/CryptoTrader/actions/runs/46001631680
+- https://github.com/AndrewLomov/CryptoTrader/actions/runs/46001813729
+
+## 27 ноября 2026, повторное ревью
+
+Два замечания до слияния закрыты в этом проходе.
+
+Глобальный emergency stop хранится в `paper_trading_control`. Вызов без биржи и котировки больше не создаёт счёт BYBIT/USDT. Новый ledger получает стоп, пока флаг включён. Снятие — `POST /api/v1/risk/emergency-stop/release`. Пока стоп включён, свеча остаётся Pending и не меняет книгу.
+
+Закрытая свеча и checkpoint Pending пишутся одной транзакцией. Сбой до commit откатывает обе записи. Повтор Pending идёт периодически в том же процессе. Время закрытия дальше чем на 5 секунд в будущем не идёт в paper. Рост `applied_candle_keys` записан в `docs/backlog.md` и в этот проход таблицу ключей не переносит.
+
+Локально после этих правок: `Category!=Integration` 108 passed, `Category=Integration` 7 passed, `dotnet format --verify-no-changes` код 0. Удалённый прогон этого коммита в текст выше не входит.

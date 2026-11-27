@@ -87,19 +87,42 @@ public class BacktestEngineTests
         trade.EntryPrice.ShouldNotBe(100m);
     }
 
+    [Fact]
+    public async Task Linear_instrument_or_contract_volume_candle_does_not_run_as_a_spot_backtest()
+    {
+        var engine = CreateEngine();
+        var strategy = new EnterOnceStrategy(Start);
+
+        var linear = await Should.ThrowAsync<InvalidOperationException>(
+            () => engine.RunAsync(
+                Request(0m, LinearBtc(), [Bar(Start, 100m, 101m, 99m, 100m)]),
+                strategy,
+                CancellationToken.None));
+        linear.Message.ShouldBe("BacktestEngine 0.1 applies spot fills only.");
+
+        var contractVolume = await Should.ThrowAsync<InvalidOperationException>(
+            () => engine.RunAsync(
+                Request(0m, SpotBtc(), [ContractVolumeBar(Start)]),
+                strategy,
+                CancellationToken.None));
+        contractVolume.Message.ShouldBe("BacktestEngine 0.1 accepts base-asset volume only.");
+    }
+
     private static BacktestEngine CreateEngine() =>
         new(new RiskManager(Options.Create(new ExecutionOptions()), TimeProvider.System), TimeProvider.System);
 
-    private static BacktestRequest Request(decimal fee)
-    {
-        var instrument = SpotBtc();
-        var candles = new[]
-        {
-            Bar(Start, 100m, 101m, 99m, 100m),
-            Bar(Start.AddHours(1), 110m, 112m, 109m, 111m),
-            Bar(Start.AddHours(2), 110m, 5_000m, 50m, 5_000m),
-        };
-        return new BacktestRequest(
+    private static BacktestRequest Request(decimal fee) =>
+        Request(
+            fee,
+            SpotBtc(),
+            [
+                Bar(Start, 100m, 101m, 99m, 100m),
+                Bar(Start.AddHours(1), 110m, 112m, 109m, 111m),
+                Bar(Start.AddHours(2), 110m, 5_000m, 50m, 5_000m),
+            ]);
+
+    private static BacktestRequest Request(decimal fee, Instrument instrument, IReadOnlyList<Candle> candles) =>
+        new(
             "scripted",
             "1",
             """{"AtrStopMultiplier":2,"AtrTakeProfitMultiplier":3}""",
@@ -115,7 +138,6 @@ public class BacktestEngineTests
             candles,
             HigherCandles: [],
             ExitOnTrendBreak: false);
-    }
 
     private static RiskProfile Profile(decimal fee) => RiskProfile.Create(
         0.5m,
@@ -143,6 +165,21 @@ public class BacktestEngineTests
             1m,
             true);
 
+    private static Candle ContractVolumeBar(DateTimeOffset open) =>
+        Candle.Create(
+            ExchangeId.Bybit,
+            new InstrumentId("BTCUSDT"),
+            Timeframe.OneHour,
+            open,
+            open.AddHours(1),
+            open: 100m,
+            high: 101m,
+            low: 99m,
+            close: 100m,
+            volume: 3m,
+            isClosed: true,
+            VolumeUnit.Contract);
+
     private static Instrument SpotBtc() => Instrument.Create(
         new InstrumentId("BTCUSDT"),
         ExchangeId.Bybit,
@@ -155,6 +192,20 @@ public class BacktestEngineTests
         0.001m,
         5m,
         null,
+        true);
+
+    private static Instrument LinearBtc() => Instrument.Create(
+        new InstrumentId("BYBIT-LINEAR-BTCUSDT"),
+        ExchangeId.Bybit,
+        "BTCUSDT",
+        "BTC",
+        "USDT",
+        InstrumentType.LinearPerpetual,
+        0.01m,
+        0.001m,
+        0.001m,
+        5m,
+        1m,
         true);
 
     private sealed class EnterOnceStrategy : ITradingStrategy

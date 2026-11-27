@@ -3,6 +3,7 @@ using CryptoTrader.Application.Common;
 using CryptoTrader.Domain.Common;
 using CryptoTrader.Domain.Instruments;
 using CryptoTrader.Domain.MarketData;
+using CryptoTrader.Exchanges.Abstractions;
 using CryptoTrader.Exchanges.Abstractions.MarketData;
 
 namespace CryptoTrader.Application.MarketData;
@@ -10,14 +11,12 @@ namespace CryptoTrader.Application.MarketData;
 public sealed class CandleAdminService(
     ICandleRepository candles,
     IInstrumentRepository instruments,
-    IMarketDataClient marketData,
-    IEnumerable<IInstrumentMetadataClient> metadataClients,
+    IExchangeRegistry registry,
     IUnitOfWork unitOfWork)
 {
     private readonly ICandleRepository _candles = candles ?? throw new ArgumentNullException(nameof(candles));
     private readonly IInstrumentRepository _instruments = instruments ?? throw new ArgumentNullException(nameof(instruments));
-    private readonly IMarketDataClient _marketData = marketData ?? throw new ArgumentNullException(nameof(marketData));
-    private readonly IReadOnlyList<IInstrumentMetadataClient> _metadataClients = (metadataClients ?? throw new ArgumentNullException(nameof(metadataClients))).ToArray();
+    private readonly IExchangeRegistry _registry = registry ?? throw new ArgumentNullException(nameof(registry));
     private readonly IUnitOfWork _unitOfWork = unitOfWork ?? throw new ArgumentNullException(nameof(unitOfWork));
 
     public async Task<IReadOnlyList<Instrument>> ListInstrumentsAsync(
@@ -115,10 +114,23 @@ public sealed class CandleAdminService(
         var instrument = await FindLocalAsync(symbol, exchangeId, cancellationToken)
             ?? await DownloadInstrumentAsync(symbol, exchangeId, cancellationToken)
             ?? throw new NotFoundException($"Instrument '{symbol.Trim()}' on {exchangeId.Value} was not found.");
-        var downloaded = await _marketData.GetCandlesAsync(instrument.Id, parsedTimeframe, from, to, cancellationToken);
-        await _candles.UpsertRangeAsync(downloaded, cancellationToken);
+        var history = await _registry.GetRequired(exchangeId).MarketData.GetCandleHistoryAsync(
+            instrument.Id,
+            parsedTimeframe,
+            from,
+            to,
+            cancellationToken);
+        if (history.Completeness is not CandleHistoryCompleteness.Complete and not CandleHistoryCompleteness.Empty)
+        {
+            var reason = string.IsNullOrWhiteSpace(history.Reason)
+                ? "Candle history is incomplete."
+                : history.Reason;
+            throw new IncompleteCandleHistoryException(reason);
+        }
+
+        await _candles.UpsertRangeAsync(history.Candles, cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
-        return downloaded.Count;
+        return history.Candles.Count;
     }
 
     private async Task<(Instrument Instrument, Timeframe Timeframe, DateTimeOffset From, DateTimeOffset To)> ResolveRangeAsync(
@@ -160,24 +172,20 @@ public sealed class CandleAdminService(
         CancellationToken cancellationToken)
     {
         var key = symbol.Trim();
-        foreach (var client in _metadataClients)
+        var metadata = _registry.GetRequired(exchange).Instruments;
+        var remote = await metadata.FindByExchangeSymbolAsync(key, cancellationToken);
+        if (remote is null && !string.Equals(key, key.ToUpperInvariant(), StringComparison.Ordinal))
         {
-            var remote = await client.FindByExchangeSymbolAsync(key, cancellationToken);
-            if (remote is null && !string.Equals(key, key.ToUpperInvariant(), StringComparison.Ordinal))
-            {
-                remote = await client.FindByExchangeSymbolAsync(key.ToUpperInvariant(), cancellationToken);
-            }
-
-            if (remote is null || remote.Exchange != exchange)
-            {
-                continue;
-            }
-
-            await _instruments.UpsertAsync(remote, cancellationToken);
-            return remote;
+            remote = await metadata.FindByExchangeSymbolAsync(key.ToUpperInvariant(), cancellationToken);
         }
 
-        return null;
+        if (remote is null || remote.Exchange != exchange)
+        {
+            return null;
+        }
+
+        await _instruments.UpsertAsync(remote, cancellationToken);
+        return remote;
     }
 }
 
