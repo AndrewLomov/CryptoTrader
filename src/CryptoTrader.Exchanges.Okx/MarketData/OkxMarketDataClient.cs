@@ -195,7 +195,7 @@ public sealed class OkxMarketDataClient : IMarketDataClient
 
         if (subscription.IncludeOrderBook)
         {
-            publicChannels.Add(new OkxChannelSubscription("books5", market.InstId));
+            publicChannels.Add(new OkxChannelSubscription(OkxPaths.WebsocketBookChannel, market.InstId));
         }
 
         if (publicChannels.Count == 0 && businessChannels.Count == 0)
@@ -221,16 +221,11 @@ public sealed class OkxMarketDataClient : IMarketDataClient
 
     internal async Task<IReadOnlyList<Instrument>> ListInstrumentsAsync(CancellationToken cancellationToken)
     {
-        var types = _options.Value.InstrumentTypes ?? [];
+        var types = OkxInstrumentTypes.Normalize(_options.Value.InstrumentTypes);
         var instruments = new List<Instrument>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var type in types)
         {
-            if (type is not ("SPOT" or "SWAP"))
-            {
-                continue;
-            }
-
             using var document = await _rest.GetAsync(OkxPaths.Instruments(type), cancellationToken);
             foreach (var instrument in ReadInstruments(document))
             {

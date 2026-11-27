@@ -351,10 +351,53 @@ public class OkxContractTests
             CancellationToken.None));
         await Should.ThrowAsync<NotSupportedException>(() => account.GetAccountAsync(CancellationToken.None));
 
+        await Should.ThrowAsync<NotSupportedException>(() => trading.GetOrderAsync(
+            new InstrumentId("OKX-SPOT-BTC-USDT"),
+            "client-1",
+            CancellationToken.None));
+        await Should.ThrowAsync<NotSupportedException>(() => trading.GetOpenOrdersAsync(CancellationToken.None));
+        await Should.ThrowAsync<NotSupportedException>(() => trading.GetPositionsAsync(CancellationToken.None));
+
         handler.Calls.ShouldBe(0);
         HasHttpClientField(typeof(OkxTradingClient)).ShouldBeFalse();
         HasHttpClientField(typeof(OkxAccountClient)).ShouldBeFalse();
         _ = http;
+    }
+
+    [Fact]
+    public void Instrument_types_normalize_case_and_reject_duplicates()
+    {
+        OkxInstrumentTypes.Normalize([" spot ", "swap"]).ShouldBe(["SPOT", "SWAP"]);
+        Should.Throw<InvalidOperationException>(() => OkxInstrumentTypes.Normalize(["SPOT", "spot"]));
+        Should.Throw<InvalidOperationException>(() => OkxInstrumentTypes.Normalize([" FUTURES "]));
+        Should.Throw<InvalidOperationException>(() => OkxInstrumentTypes.Normalize([" "]));
+        Should.Throw<InvalidOperationException>(() => OkxInstrumentTypes.Normalize([]));
+    }
+
+    [Fact]
+    public async Task Lowercase_instrument_types_request_canonical_spot_and_swap()
+    {
+        using var harness = MarketHarness.Route(
+            _ => MarketHarness.Json("""{"code":"0","msg":"","data":[]}"""),
+            [" spot ", "swap"]);
+
+        var instruments = await harness.Client.ListInstrumentsAsync(CancellationToken.None);
+
+        instruments.ShouldBeEmpty();
+        var paths = harness.Handler.Requests.Select(request => request.RequestUri!.PathAndQuery).ToArray();
+        paths.ShouldContain(path => path.Contains("instType=SPOT", StringComparison.Ordinal));
+        paths.ShouldContain(path => path.Contains("instType=SWAP", StringComparison.Ordinal));
+        paths.ShouldNotContain(path => path.Contains("instType=spot", StringComparison.Ordinal));
+        harness.AssertLocal();
+    }
+
+    [Fact]
+    public void Order_book_channels_are_snapshots_not_incremental_depth()
+    {
+        OkxPaths.WebsocketBookChannel.ShouldBe("books5");
+        OkxPaths.WebsocketBookDepth.ShouldBe(5);
+        OkxPaths.OrderBookDepth.ShouldBe(50);
+        OkxPaths.Books("BTC-USDT").ShouldContain("sz=50", Case.Sensitive);
     }
 
     [Fact(Timeout = 15000)]
@@ -558,7 +601,7 @@ public class OkxContractTests
         public static MarketHarness Fixed(string body, HttpStatusCode status = HttpStatusCode.OK) =>
             Route(_ => Json(body, status));
 
-        public static MarketHarness Route(Func<HttpRequestMessage, HttpResponseMessage> respond) =>
+        public static MarketHarness Route(Func<HttpRequestMessage, HttpResponseMessage> respond, string[]? instrumentTypes = null) =>
             Create(respond, new OkxOptions
             {
                 RestBaseUrl = "http://127.0.0.1:9/",
@@ -568,7 +611,7 @@ public class OkxContractTests
                 MaxHistoryCandlesPerRequest = 100,
                 MaxRequestsPerWindow = 100,
                 RateLimitWindowSeconds = 2,
-                InstrumentTypes = ["SPOT", "SWAP"],
+                InstrumentTypes = instrumentTypes ?? ["SPOT", "SWAP"],
             }, connector: null);
 
         public static MarketHarness Sockets(ScriptedConnector connector, int ackTimeoutSeconds, int pingIntervalSeconds) =>

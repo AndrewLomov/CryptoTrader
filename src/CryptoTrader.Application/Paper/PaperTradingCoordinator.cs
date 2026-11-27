@@ -1,3 +1,6 @@
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using CryptoTrader.Application.Abstractions.Execution;
 using CryptoTrader.Application.Abstractions.Paper;
 using CryptoTrader.Application.Abstractions.Persistence;
@@ -46,60 +49,53 @@ public sealed class PaperTradingCoordinator(
 {
     private const string DefaultQuoteAsset = "USDT";
 
-    public Task OnClosedCandleAsync(Candle candle, CancellationToken cancellationToken)
+    public Task<PaperCandleResult> OnClosedCandleAsync(Candle candle, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(candle);
         return WithGateAsync(cancellationToken, token => HandleCandleAsync(candle, token));
     }
 
-    public Task<EmergencyStopOutcome> EngageEmergencyStopAsync(string? reason, CancellationToken cancellationToken) =>
-        WithGateAsync<EmergencyStopOutcome>(cancellationToken, async token =>
-        {
-            var now = UtcTime.Normalize(timeProvider.GetUtcNow());
-            var account = await GetOrCreateAccountAsync(token);
-            var ledger = await LoadLedgerAsync(account, DefaultQuoteAsset, token);
-            var wasEngaged = ledger.EmergencyStop;
-            var normalizedReason = string.IsNullOrWhiteSpace(reason) ? "Emergency stop." : reason.Trim();
-            ledger.EngageEmergencyStop(now, normalizedReason);
-            if (!wasEngaged)
-            {
-                await SaveLedgerAsync(account, ledger, token);
-                await unitOfWork.SaveChangesAsync(token);
-            }
+    public Task<EmergencyStopOutcome> EngageEmergencyStopAsync(
+        string? reason,
+        string? exchange,
+        string? quoteAsset,
+        CancellationToken cancellationToken) =>
+        WithGateAsync(cancellationToken, token => EngageEmergencyStopCoreAsync(reason, exchange, quoteAsset, token));
 
-            metrics.RecordEquity(ledger.LastEquity);
-            return new EmergencyStopOutcome(ledger.EmergencyStop, ledger.UpdatedAtUtc);
-        });
+    public Task<IReadOnlyList<PaperAccountSummary>> ListAccountsAsync(CancellationToken cancellationToken) =>
+        WithGateAsync(cancellationToken, ListAccountsCoreAsync);
 
     public Task<PaperTradingSnapshot> GetSnapshotAsync(
         Guid? accountId,
         TradingMode? tradingMode,
+        string? exchange,
+        string? quoteAsset,
         CancellationToken cancellationToken) =>
-        WithGateAsync<PaperTradingSnapshot>(cancellationToken, async token =>
-        {
-            var account = await FindAccountAsync(accountId, token);
-            if (account is null)
-            {
-                return PaperTradingSnapshot.Empty;
-            }
+        WithGateAsync(cancellationToken, token => GetSnapshotCoreAsync(accountId, tradingMode, exchange, quoteAsset, token));
 
-            var listedOrders = await orders.ListAsync(account.Id, tradingMode, token);
-            var listedPositions = await positions.ListAsync(account.Id, token);
-            return new PaperTradingSnapshot(account, listedOrders, listedPositions);
-        });
-
-    private async Task HandleCandleAsync(Candle candle, CancellationToken cancellationToken)
+    private async Task<PaperCandleResult> HandleCandleAsync(Candle candle, CancellationToken cancellationToken)
     {
         if (!candle.IsClosed)
         {
-            return;
+            return PaperCandleResult.Skipped("Candle is not closed.");
         }
 
         var instrument = await instruments.FindAsync(candle.Instrument, cancellationToken);
         if (instrument is null)
         {
             logger.LogWarning("Closed candle at {CloseTime} has no stored instrument {InstrumentId}.", candle.CloseTimeUtc, candle.Instrument.Value);
-            return;
+            return PaperCandleResult.Skipped("Stored instrument was not found.");
+        }
+
+        if (!PaperAccountScope.SameExchange(instrument.Exchange, candle.Exchange) || candle.Instrument != instrument.Id)
+        {
+            logger.LogWarning(
+                "Candle {CandleInstrument} on {CandleExchange} does not match instrument {InstrumentId} on {InstrumentExchange}.",
+                candle.Instrument.Value,
+                candle.Exchange.Value,
+                instrument.Id.Value,
+                instrument.Exchange.Value);
+            return PaperCandleResult.Skipped("Candle identity does not match the stored instrument.");
         }
 
         if (instrument.Type != InstrumentType.Spot || candle.VolumeUnit != VolumeUnit.BaseAsset)
@@ -109,32 +105,54 @@ public sealed class PaperTradingCoordinator(
                 instrument.Id.Value,
                 instrument.Type,
                 candle.VolumeUnit);
-            return;
+            return PaperCandleResult.Skipped("Paper trading accepts spot base-asset volume only.");
         }
 
-        if (instrument.Exchange != ExchangeId.Bybit)
-        {
-            logger.LogWarning("Candle exchange {Exchange} is outside the paper BYBIT account.", instrument.Exchange.Value);
-            return;
-        }
-
+        var marketData = marketDataOptions.Value ?? throw new InvalidOperationException("Market data options are not configured.");
         var asOf = UtcTime.Normalize(candle.CloseTimeUtc);
-        var account = await GetOrCreateAccountAsync(cancellationToken);
+        var admission = CandleProcessingDecision.Evaluate(
+            candle.IsClosed,
+            asOf,
+            receivedAtUtc: null,
+            UtcTime.Normalize(timeProvider.GetUtcNow()),
+            CandleProcessingDecision.Window(marketData.StaleAfterSeconds));
+        if (!admission.CanUpdatePaper)
+        {
+            logger.LogInformation(
+                "Paper trading skipped stale {Exchange} {InstrumentId} candle closed at {CloseTime}: {Reason}.",
+                candle.Exchange.Value,
+                instrument.Id.Value,
+                asOf,
+                admission.Reason);
+            return PaperCandleResult.Skipped(admission.Reason);
+        }
 
+        var account = await GetOrCreateAccountAsync(instrument.Exchange, instrument.QuoteAsset, cancellationToken);
         var ledger = await LoadLedgerAsync(account, instrument.QuoteAsset, cancellationToken);
+        var candleKey = PaperCandleKey.For(candle);
+        if (ledger.HasAppliedCandle(candleKey))
+        {
+            logger.LogInformation(
+                "Paper candle {CandleKey} was already applied to {Exchange} {QuoteAsset}.",
+                candleKey,
+                ledger.Exchange.Value,
+                ledger.QuoteAsset);
+            return PaperCandleResult.Applied("Candle was already applied.");
+        }
+
         ledger.ObserveMark(instrument.Id, new Price(candle.Close), asOf);
         var running = (await strategyInstances.ListAsync(cancellationToken))
             .Where(instance => instance.Status == StrategyInstanceStatus.Running && instance.InstrumentId == instrument.Id)
             .ToArray();
         if (running.Length == 0)
         {
+            ledger.MarkCandleApplied(candleKey);
             await SaveLedgerAsync(account, ledger, cancellationToken);
             await unitOfWork.SaveChangesAsync(cancellationToken);
             metrics.RecordEquity(ledger.LastEquity);
-            return;
+            return PaperCandleResult.Applied(null);
         }
 
-        var marketData = marketDataOptions.Value ?? throw new InvalidOperationException("Market data options are not configured.");
         var profile = (riskOptions.Value ?? throw new InvalidOperationException("Risk options are not configured.")).ToProfile();
         var market = BuildMarket(candle, asOf, marketData.StaleAfterSeconds);
         var historyFrom = DateTimeOffset.UnixEpoch;
@@ -185,6 +203,7 @@ public sealed class PaperTradingCoordinator(
                     account,
                     ledger,
                     instrument,
+                    candle,
                     instance,
                     signal,
                     market,
@@ -195,15 +214,18 @@ public sealed class PaperTradingCoordinator(
             }
         }
 
+        ledger.MarkCandleApplied(candleKey);
         await SaveLedgerAsync(account, ledger, cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         metrics.RecordEquity(ledger.LastEquity);
+        return PaperCandleResult.Applied(null);
     }
 
     private async Task ProcessSignalAsync(
         TradingAccount account,
         PortfolioLedger ledger,
         Instrument instrument,
+        Candle candle,
         StrategyInstance instance,
         TradeSignal signal,
         MarketSnapshot market,
@@ -212,9 +234,11 @@ public sealed class PaperTradingCoordinator(
         HashSet<Guid> seen,
         CancellationToken cancellationToken)
     {
+        var clientOrderId = PaperClientOrderId(account, candle, instance, signal.Action);
         var alreadyStored = seen.Contains(signal.SignalId) || await signals.ExistsAsync(signal.SignalId, cancellationToken);
         if (alreadyStored)
         {
+            await ReconcileExistingOrderAsync(account, ledger, instrument, signal, clientOrderId, cancellationToken);
             approvedIds.Add(signal.SignalId);
         }
 
@@ -234,6 +258,11 @@ public sealed class PaperTradingCoordinator(
 
         if (!decision.Approved)
         {
+            if (string.Equals(decision.RejectionCode, RiskRejectionCodes.DuplicateSignal, StringComparison.Ordinal))
+            {
+                await ReconcileExistingOrderAsync(account, ledger, instrument, signal, clientOrderId, cancellationToken);
+            }
+
             logger.LogInformation(
                 "Signal {SignalId} {Action} was rejected with {RejectionCode}.",
                 signal.SignalId,
@@ -259,7 +288,7 @@ public sealed class PaperTradingCoordinator(
             return;
         }
 
-        await ExecuteApprovedAsync(account, ledger, instrument, signal, quantity, market, cancellationToken);
+        await ExecuteApprovedAsync(account, ledger, instrument, signal, quantity, market, clientOrderId, cancellationToken);
         logger.LogInformation("Signal {SignalId} {Action} was approved.", signal.SignalId, signal.Action);
     }
 
@@ -270,8 +299,14 @@ public sealed class PaperTradingCoordinator(
         TradeSignal signal,
         Quantity quantity,
         MarketSnapshot market,
+        string clientOrderId,
         CancellationToken cancellationToken)
     {
+        if (await ReconcileExistingOrderAsync(account, ledger, instrument, signal, clientOrderId, cancellationToken))
+        {
+            return;
+        }
+
         var now = UtcTime.Normalize(timeProvider.GetUtcNow());
         var approvalId = Guid.NewGuid();
         var approved = new ApprovedOrder(
@@ -281,7 +316,7 @@ public sealed class PaperTradingCoordinator(
             quantity,
             OrderType.Market,
             limitPrice: null,
-            "p" + Guid.NewGuid().ToString("N"),
+            clientOrderId,
             now);
         var result = await executionVenue.ExecuteAsync(approved, instrument, market, cancellationToken);
         if (result.Order is null)
@@ -304,6 +339,14 @@ public sealed class PaperTradingCoordinator(
         var execution = result.Execution;
         var recorded = RecordOrderFill(result.Order, execution, signal.SignalId, approvalId);
         var fill = recorded ?? execution;
+        if (!string.Equals(fill.ExchangeTradeId, PaperTradeId(clientOrderId), StringComparison.Ordinal))
+        {
+            logger.LogWarning(
+                "Paper fill {TradeId} does not match the deterministic id for {ClientOrderId}.",
+                fill.ExchangeTradeId,
+                clientOrderId);
+        }
+
         var position = ledger.ApplySpotFill(
             instrument,
             fill.Side,
@@ -344,39 +387,303 @@ public sealed class PaperTradingCoordinator(
             causationId);
     }
 
-    private async Task<TradingAccount> GetOrCreateAccountAsync(CancellationToken cancellationToken)
+    private async Task<EmergencyStopOutcome> EngageEmergencyStopCoreAsync(
+        string? reason,
+        string? exchange,
+        string? quoteAsset,
+        CancellationToken cancellationToken)
     {
-        var existing = await FindPaperAccountAsync(cancellationToken);
+        var now = UtcTime.Normalize(timeProvider.GetUtcNow());
+        var exchangeFilter = ParseExchange(exchange);
+        var quoteFilter = string.IsNullOrWhiteSpace(quoteAsset) ? null : PaperAccountScope.NormalizeQuote(quoteAsset);
+        var targets = await SelectAccountsAsync(exchangeFilter, quoteFilter, cancellationToken);
+        if (targets.Count == 0)
+        {
+            if (exchangeFilter is null && quoteFilter is null)
+            {
+                targets = [await GetOrCreateAccountAsync(ExchangeId.Bybit, DefaultQuoteAsset, cancellationToken)];
+            }
+            else if (exchangeFilter is ExchangeId selected && quoteFilter is not null)
+            {
+                targets = [await GetOrCreateAccountAsync(selected, quoteFilter, cancellationToken)];
+            }
+            else
+            {
+                return new EmergencyStopOutcome(false, now);
+            }
+        }
+
+        var normalizedReason = string.IsNullOrWhiteSpace(reason) ? "Emergency stop." : reason.Trim();
+        var engaged = false;
+        var occurredAt = now;
+        foreach (var account in targets)
+        {
+            var quote = quoteFilter ?? await QuoteForAsync(account, cancellationToken) ?? DefaultQuoteAsset;
+            var ledger = await LoadLedgerAsync(account, quote, cancellationToken);
+            var wasEngaged = ledger.EmergencyStop;
+            ledger.EngageEmergencyStop(now, normalizedReason);
+            if (!wasEngaged)
+            {
+                await SaveLedgerAsync(account, ledger, cancellationToken);
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+            }
+
+            metrics.RecordEquity(ledger.LastEquity);
+            engaged = ledger.EmergencyStop;
+            occurredAt = ledger.UpdatedAtUtc;
+        }
+
+        return new EmergencyStopOutcome(engaged, occurredAt);
+    }
+
+    private async Task<IReadOnlyList<PaperAccountSummary>> ListAccountsCoreAsync(CancellationToken cancellationToken)
+    {
+        var listed = await accounts.ListAsync(cancellationToken);
+        var summaries = new List<PaperAccountSummary>();
+        foreach (var account in listed)
+        {
+            if (account.Mode != TradingMode.Paper)
+            {
+                continue;
+            }
+
+            var state = await paperState.LoadAsync(account.Id, cancellationToken);
+            if (state is null)
+            {
+                continue;
+            }
+
+            var openPositions = state.Positions.Count(position =>
+                position.Side == PositionSide.Long && position.Quantity > 0m);
+            var drawdown = state.PeakEquity <= 0m
+                ? 0m
+                : Math.Max(0m, (state.PeakEquity - state.LastEquity) / state.PeakEquity);
+            summaries.Add(new PaperAccountSummary(
+                account.Id.Value,
+                account.Exchange.Value,
+                state.QuoteAsset,
+                state.Cash,
+                state.LastEquity,
+                state.LastEquity - state.DayStartEquity,
+                drawdown,
+                state.EmergencyStop,
+                openPositions));
+        }
+
+        return summaries
+            .OrderBy(item => item.Exchange, StringComparer.Ordinal)
+            .ThenBy(item => item.QuoteAsset, StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private async Task<PaperTradingSnapshot> GetSnapshotCoreAsync(
+        Guid? accountId,
+        TradingMode? tradingMode,
+        string? exchange,
+        string? quoteAsset,
+        CancellationToken cancellationToken)
+    {
+        var selected = await SelectSnapshotAccountsAsync(accountId, exchange, quoteAsset, cancellationToken);
+        if (selected.Count == 0)
+        {
+            return PaperTradingSnapshot.Empty;
+        }
+
+        var listedOrders = new List<Order>();
+        var listedPositions = new List<Position>();
+        foreach (var account in selected)
+        {
+            listedOrders.AddRange(await orders.ListAsync(account.Id, tradingMode, cancellationToken));
+            listedPositions.AddRange(await positions.ListAsync(account.Id, cancellationToken));
+        }
+
+        return new PaperTradingSnapshot(selected.Count == 1 ? selected[0] : null, listedOrders, listedPositions);
+    }
+
+    private async Task<IReadOnlyList<TradingAccount>> SelectSnapshotAccountsAsync(
+        Guid? accountId,
+        string? exchange,
+        string? quoteAsset,
+        CancellationToken cancellationToken)
+    {
+        if (accountId is Guid id)
+        {
+            var account = await accounts.FindAsync(new TradingAccountId(id), cancellationToken)
+                ?? throw new NotFoundException($"Trading account '{accountId}' was not found.");
+            return [account];
+        }
+
+        return await SelectAccountsAsync(ParseExchange(exchange), string.IsNullOrWhiteSpace(quoteAsset) ? null : PaperAccountScope.NormalizeQuote(quoteAsset), cancellationToken);
+    }
+
+    private async Task<List<TradingAccount>> SelectAccountsAsync(
+        ExchangeId? exchange,
+        string? quoteAsset,
+        CancellationToken cancellationToken)
+    {
+        var listed = await accounts.ListAsync(cancellationToken);
+        var selected = new List<TradingAccount>();
+        foreach (var account in listed)
+        {
+            if (account.Mode != TradingMode.Paper)
+            {
+                continue;
+            }
+
+            if (exchange is ExchangeId required && !PaperAccountScope.SameExchange(account.Exchange, required))
+            {
+                continue;
+            }
+
+            if (quoteAsset is null)
+            {
+                selected.Add(account);
+                continue;
+            }
+
+            var state = await paperState.LoadAsync(account.Id, cancellationToken);
+            if (state is not null && PaperAccountScope.SameQuote(state.QuoteAsset, quoteAsset))
+            {
+                selected.Add(account);
+            }
+        }
+
+        return selected;
+    }
+
+    private async Task<string?> QuoteForAsync(TradingAccount account, CancellationToken cancellationToken)
+    {
+        var state = await paperState.LoadAsync(account.Id, cancellationToken);
+        return state?.QuoteAsset;
+    }
+
+    private async Task<bool> ReconcileExistingOrderAsync(
+        TradingAccount account,
+        PortfolioLedger ledger,
+        Instrument instrument,
+        TradeSignal signal,
+        string clientOrderId,
+        CancellationToken cancellationToken)
+    {
+        var existing = await orders.FindByClientOrderIdAsync(account.Id, clientOrderId, cancellationToken);
+        if (existing is null)
+        {
+            return false;
+        }
+
+        var tradeId = existing.AppliedExchangeTradeIds.FirstOrDefault() ?? PaperTradeId(clientOrderId);
+        if (ledger.AppliedExchangeTradeIds.Contains(tradeId) || existing.AverageFillPrice is not decimal price)
+        {
+            return true;
+        }
+
+        var feeRate = riskOptions.Value?.FeeRate ?? 0m;
+        var fee = price * existing.FilledQuantity.Value * feeRate;
+        if (fee < 0m)
+        {
+            fee = 0m;
+        }
+
+        ledger.ApplySpotFill(
+            instrument,
+            existing.Side,
+            existing.FilledQuantity,
+            new Price(price),
+            fee,
+            instrument.QuoteAsset,
+            existing.UpdatedAtUtc,
+            tradeId,
+            signal.SignalId,
+            causationId: null);
+        logger.LogInformation("Recovered paper fill {TradeId} onto {Exchange} {QuoteAsset}.", tradeId, ledger.Exchange.Value, ledger.QuoteAsset);
+        return true;
+    }
+
+    private static string PaperClientOrderId(
+        TradingAccount account,
+        Candle candle,
+        StrategyInstance instance,
+        SignalAction action)
+    {
+        var raw = string.Create(
+            CultureInfo.InvariantCulture,
+            $"{account.Id.Value:N}|{candle.Exchange.Value}|{candle.Instrument.Value}|{candle.Timeframe.Code}|{candle.OpenTimeUtc.UtcDateTime:O}|{instance.Id.Value:N}|{action}");
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(raw)));
+        return "p" + hash[..32].ToLowerInvariant();
+    }
+
+    private static string PaperTradeId(string clientOrderId) => "paper-fill-" + clientOrderId;
+
+    private static ExchangeId? ParseExchange(string? exchange)
+    {
+        if (string.IsNullOrWhiteSpace(exchange))
+        {
+            return null;
+        }
+
+        return new ExchangeId(PaperAccountScope.NormalizeExchange(exchange));
+    }
+
+    private async Task<TradingAccount> GetOrCreateAccountAsync(
+        ExchangeId exchange,
+        string quoteAsset,
+        CancellationToken cancellationToken)
+    {
+        var existing = await FindPaperAccountAsync(exchange, quoteAsset, cancellationToken);
         if (existing is not null)
         {
             return existing;
         }
 
+        var scopedId = PaperAccountScope.IdFor(exchange, quoteAsset);
+        var reserved = await accounts.FindAsync(scopedId, cancellationToken);
+        if (reserved is not null)
+        {
+            if (reserved.Mode != TradingMode.Paper || !PaperAccountScope.SameExchange(reserved.Exchange, exchange))
+            {
+                throw new InvalidOperationException("The paper account id is already used by a different account.");
+            }
+
+            return reserved;
+        }
+
         var created = TradingAccount.Create(
-            TradingAccountId.New(),
-            ExchangeId.Bybit,
-            "Paper",
+            scopedId,
+            new ExchangeId(PaperAccountScope.NormalizeExchange(exchange.Value)),
+            PaperAccountScope.DisplayName(exchange, quoteAsset),
             TradingMode.Paper,
             UtcTime.Normalize(timeProvider.GetUtcNow()));
         await accounts.UpsertAsync(created, cancellationToken);
         return created;
     }
 
-    private async Task<TradingAccount?> FindAccountAsync(Guid? accountId, CancellationToken cancellationToken)
-    {
-        if (accountId is null)
-        {
-            return await FindPaperAccountAsync(cancellationToken);
-        }
-
-        return await accounts.FindAsync(new TradingAccountId(accountId.Value), cancellationToken)
-            ?? throw new NotFoundException($"Trading account '{accountId}' was not found.");
-    }
-
-    private async Task<TradingAccount?> FindPaperAccountAsync(CancellationToken cancellationToken)
+    private async Task<TradingAccount?> FindPaperAccountAsync(
+        ExchangeId exchange,
+        string quoteAsset,
+        CancellationToken cancellationToken)
     {
         var listed = await accounts.ListAsync(cancellationToken);
-        return listed.FirstOrDefault(account => account.Mode == TradingMode.Paper && account.Exchange == ExchangeId.Bybit);
+        TradingAccount? oldest = null;
+        foreach (var account in listed)
+        {
+            if (account.Mode != TradingMode.Paper || !PaperAccountScope.SameExchange(account.Exchange, exchange))
+            {
+                continue;
+            }
+
+            var state = await paperState.LoadAsync(account.Id, cancellationToken);
+            if (state is null || !PaperAccountScope.SameQuote(state.QuoteAsset, quoteAsset))
+            {
+                continue;
+            }
+
+            if (oldest is null || account.CreatedAtUtc < oldest.CreatedAtUtc)
+            {
+                oldest = account;
+            }
+        }
+
+        return oldest;
     }
 
     private async Task<PortfolioLedger> LoadLedgerAsync(
@@ -395,9 +702,14 @@ public sealed class PaperTradingCoordinator(
                 UtcTime.Normalize(timeProvider.GetUtcNow()));
         }
 
-        if (state.AccountId != account.Id)
+        if (state.AccountId != account.Id || !PaperAccountScope.SameExchange(state.Exchange, account.Exchange))
         {
             throw new InvalidOperationException("Paper state belongs to another account.");
+        }
+
+        if (!PaperAccountScope.SameQuote(state.QuoteAsset, quoteAsset))
+        {
+            throw new InvalidOperationException("Paper state quote asset does not match the requested account scope.");
         }
 
         var restored = state.Positions
@@ -432,7 +744,8 @@ public sealed class PaperTradingCoordinator(
             state.UpdatedAtUtc,
             restored,
             state.MarksByInstrument,
-            state.AppliedExchangeTradeIds);
+            state.AppliedExchangeTradeIds,
+            state.AppliedCandleKeys);
     }
 
     private async Task SaveLedgerAsync(TradingAccount account, PortfolioLedger ledger, CancellationToken cancellationToken)
@@ -486,7 +799,8 @@ public sealed class PaperTradingCoordinator(
             storedPositions,
             ledger.AppliedExchangeTradeIds.ToArray(),
             new Dictionary<InstrumentId, decimal>(ledger.Marks),
-            ledger.UpdatedAtUtc);
+            ledger.UpdatedAtUtc,
+            ledger.AppliedCandleKeys.ToArray());
     }
 
     private MarketSnapshot BuildMarket(Candle candle, DateTimeOffset asOf, int staleAfterSeconds)

@@ -32,4 +32,5 @@ public sealed record PaperState(
     IReadOnlyList<PaperPositionState> Positions,
     IReadOnlyList<string> AppliedExchangeTradeIds,
     IReadOnlyDictionary<InstrumentId, decimal> MarksByInstrument,
-    DateTimeOffset UpdatedAtUtc);
+    DateTimeOffset UpdatedAtUtc,
+    IReadOnlyList<string> AppliedCandleKeys);

@@ -117,6 +117,8 @@ public sealed class CandleConsumerCheckpointRow
 
     public int State { get; set; }
 
+    public string? SkipReason { get; set; }
+
     public DateTimeOffset UpdatedAtUtc { get; set; }
 }
 
@@ -547,6 +549,8 @@ public sealed class PaperAccountRow
     public required string MarksJson { get; set; }
 
     public required string AppliedExchangeTradeIdsJson { get; set; }
+
+    public string AppliedCandleKeysJson { get; set; } = "[]";
 
     public DateTimeOffset UpdatedAtUtc { get; set; }
 }

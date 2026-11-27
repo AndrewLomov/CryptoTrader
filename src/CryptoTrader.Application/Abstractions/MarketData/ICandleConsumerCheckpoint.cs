@@ -10,7 +10,11 @@ public interface ICandleConsumerCheckpoint
 {
     public const string PaperConsumer = "paper";
 
-    Task MarkPendingAsync(
+    /// <summary>
+    /// Marks the candle pending. Returns false when the row is already Processed or Skipped
+    /// so a duplicate delivery cannot reopen a terminal candle.
+    /// </summary>
+    Task<bool> MarkPendingAsync(
         Candle candle,
         string consumer,
         DateTimeOffset updatedAtUtc,
@@ -19,6 +23,13 @@ public interface ICandleConsumerCheckpoint
     Task MarkProcessedAsync(
         Candle candle,
         string consumer,
+        DateTimeOffset updatedAtUtc,
+        CancellationToken cancellationToken);
+
+    Task MarkSkippedAsync(
+        Candle candle,
+        string consumer,
+        string reason,
         DateTimeOffset updatedAtUtc,
         CancellationToken cancellationToken);
 
@@ -32,4 +43,5 @@ public enum CandleConsumerState
 {
     Pending = 1,
     Processed = 2,
+    Skipped = 3,
 }

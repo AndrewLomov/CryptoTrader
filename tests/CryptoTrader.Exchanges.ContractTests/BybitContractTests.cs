@@ -8,6 +8,7 @@ using CryptoTrader.Exchanges.Abstractions;
 using CryptoTrader.Exchanges.Abstractions.MarketData;
 using CryptoTrader.Exchanges.Abstractions.Models;
 using CryptoTrader.Exchanges.Bybit;
+using CryptoTrader.Exchanges.Bybit.Accounts;
 using CryptoTrader.Exchanges.Bybit.Trading;
 using Microsoft.Extensions.Options;
 using Shouldly;
@@ -50,6 +51,20 @@ public class BybitContractTests
         result.ErrorCode.ShouldBe(ExchangeErrorCodes.LiveTradingDisabled);
         result.UnknownState.ShouldBeFalse();
         result.Accepted.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task Private_reads_throw_instead_of_returning_an_empty_success()
+    {
+        var trading = new BybitTradingClient();
+        var account = new BybitAccountClient();
+        var instrument = new InstrumentId("BYBIT-SPOT-BTCUSDT");
+
+        await Should.ThrowAsync<NotSupportedException>(() => trading.GetOrderAsync(instrument, "client-1", CancellationToken.None));
+        await Should.ThrowAsync<NotSupportedException>(() => trading.GetOpenOrdersAsync(CancellationToken.None));
+        await Should.ThrowAsync<NotSupportedException>(() => trading.GetPositionsAsync(CancellationToken.None));
+        await Should.ThrowAsync<NotSupportedException>(() => trading.CancelAsync(instrument, "exchange-1", CancellationToken.None));
+        await Should.ThrowAsync<NotSupportedException>(() => account.GetAccountAsync(CancellationToken.None));
     }
 
     [Fact]

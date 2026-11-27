@@ -299,20 +299,25 @@ public sealed class OkxOptionsValidator : IValidateOptions<OkxOptions>
         }
         else
         {
-            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var seen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var type in options.InstrumentTypes)
             {
-                if (string.IsNullOrWhiteSpace(type)
-                    || (!string.Equals(type, "SPOT", StringComparison.OrdinalIgnoreCase)
-                        && !string.Equals(type, "SWAP", StringComparison.OrdinalIgnoreCase)))
+                if (string.IsNullOrWhiteSpace(type))
                 {
-                    failures.Add($"Okx:InstrumentTypes contains '{type}', which is not SPOT or SWAP.");
+                    failures.Add("Okx:InstrumentTypes contains a blank value.");
                     continue;
                 }
 
-                if (!seen.Add(type))
+                var canonical = type.Trim().ToUpperInvariant();
+                if (canonical is not ("SPOT" or "SWAP"))
                 {
-                    failures.Add($"Okx:InstrumentTypes contains duplicate '{type}'.");
+                    failures.Add($"Okx:InstrumentTypes contains '{type.Trim()}', which is not SPOT or SWAP.");
+                    continue;
+                }
+
+                if (!seen.Add(canonical))
+                {
+                    failures.Add($"Okx:InstrumentTypes contains duplicate '{canonical}'.");
                 }
             }
         }

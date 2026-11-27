@@ -2,6 +2,7 @@ using System.Diagnostics.Metrics;
 using CryptoTrader.Application.Abstractions.MarketData;
 using CryptoTrader.Application.Abstractions.Persistence;
 using CryptoTrader.Application.Configuration;
+using CryptoTrader.Application.MarketData;
 using CryptoTrader.Application.Paper;
 using CryptoTrader.Domain.Common;
 using CryptoTrader.Domain.Instruments;
@@ -125,9 +126,10 @@ public sealed class CandleIngestionService : BackgroundService
             foreach (var candle in pending)
             {
                 stoppingToken.ThrowIfCancellationRequested();
+                PaperCandleResult result;
                 try
                 {
-                    await coordinator.OnClosedCandleAsync(candle, stoppingToken);
+                    result = await AdmitReplayAsync(coordinator, candle, stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -146,11 +148,7 @@ public sealed class CandleIngestionService : BackgroundService
 
                 try
                 {
-                    await checkpoint.MarkProcessedAsync(
-                        candle,
-                        ICandleConsumerCheckpoint.PaperConsumer,
-                        _timeProvider.GetUtcNow(),
-                        stoppingToken);
+                    await CompleteCheckpointAsync(checkpoint, candle, result, stoppingToken);
                     progressed = true;
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
@@ -340,10 +338,10 @@ public sealed class CandleIngestionService : BackgroundService
                     continue;
                 }
 
-                ObserveClosedCandle(target, observed);
+                var decision = EvaluateClosedCandle(target, observed);
                 try
                 {
-                    await PersistAndTradeAsync(observed.Candle, stoppingToken);
+                    await PersistAndTradeAsync(observed.Candle, decision, stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -431,23 +429,47 @@ public sealed class CandleIngestionService : BackgroundService
         return new InstrumentResolution(instrument, null);
     }
 
-    private async Task PersistAndTradeAsync(Candle candle, CancellationToken cancellationToken)
+    private async Task PersistAndTradeAsync(
+        Candle candle,
+        CandleProcessingDecision decision,
+        CancellationToken cancellationToken)
     {
         await using var scope = _scopeFactory.CreateAsyncScope();
         var repository = scope.ServiceProvider.GetRequiredService<ICandleRepository>();
         var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
         var checkpoint = scope.ServiceProvider.GetRequiredService<ICandleConsumerCheckpoint>();
         var coordinator = scope.ServiceProvider.GetRequiredService<PaperTradingCoordinator>();
-        await repository.UpsertRangeAsync([candle], cancellationToken);
-        await unitOfWork.SaveChangesAsync(cancellationToken);
-        await checkpoint.MarkPendingAsync(
+        if (decision.CanPersistHistory)
+        {
+            await repository.UpsertRangeAsync([candle], cancellationToken);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+
+        var pending = await checkpoint.MarkPendingAsync(
             candle,
             ICandleConsumerCheckpoint.PaperConsumer,
             _timeProvider.GetUtcNow(),
             cancellationToken);
+        if (!pending)
+        {
+            return;
+        }
+
+        if (!decision.CanUpdatePaper)
+        {
+            await checkpoint.MarkSkippedAsync(
+                candle,
+                ICandleConsumerCheckpoint.PaperConsumer,
+                decision.Reason ?? "Candle is not eligible for paper trading.",
+                _timeProvider.GetUtcNow(),
+                cancellationToken);
+            return;
+        }
+
+        PaperCandleResult result;
         try
         {
-            await coordinator.OnClosedCandleAsync(candle, cancellationToken);
+            result = await coordinator.OnClosedCandleAsync(candle, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -463,34 +485,72 @@ public sealed class CandleIngestionService : BackgroundService
             return;
         }
 
-        await checkpoint.MarkProcessedAsync(
-            candle,
-            ICandleConsumerCheckpoint.PaperConsumer,
-            _timeProvider.GetUtcNow(),
-            cancellationToken);
+        await CompleteCheckpointAsync(checkpoint, candle, result, cancellationToken);
     }
 
-    private void ObserveClosedCandle(IngestionTarget target, CandleObserved observed)
+    private async Task<PaperCandleResult> AdmitReplayAsync(
+        PaperTradingCoordinator coordinator,
+        Candle candle,
+        CancellationToken cancellationToken)
+    {
+        var decision = CandleProcessingDecision.Evaluate(
+            candle.IsClosed,
+            candle.CloseTimeUtc,
+            receivedAtUtc: null,
+            _timeProvider.GetUtcNow(),
+            StaleAfter());
+        if (!decision.CanUpdatePaper)
+        {
+            _logger.LogInformation(
+                "Pending {Exchange} {InstrumentId} candle closed at {CloseTime} is not eligible for paper trading: {Reason}.",
+                candle.Exchange.Value,
+                candle.Instrument.Value,
+                candle.CloseTimeUtc,
+                decision.Reason);
+            return PaperCandleResult.Skipped(decision.Reason);
+        }
+
+        return await coordinator.OnClosedCandleAsync(candle, cancellationToken);
+    }
+
+    private Task CompleteCheckpointAsync(
+        ICandleConsumerCheckpoint checkpoint,
+        Candle candle,
+        PaperCandleResult result,
+        CancellationToken cancellationToken)
     {
         var now = _timeProvider.GetUtcNow();
-        var closeTime = observed.Candle.CloseTimeUtc;
-        RememberClose(closeTime);
-        var staleAfter = StaleAfter();
-        var queuedFor = NonNegative(now - observed.ReceivedAtUtc);
-        var dataAge = NonNegative(now - closeTime);
-        if (queuedFor > staleAfter)
+        return result.WasApplied
+            ? checkpoint.MarkProcessedAsync(candle, ICandleConsumerCheckpoint.PaperConsumer, now, cancellationToken)
+            : checkpoint.MarkSkippedAsync(
+                candle,
+                ICandleConsumerCheckpoint.PaperConsumer,
+                result.Reason ?? "Paper trading skipped the candle.",
+                now,
+                cancellationToken);
+    }
+
+    private CandleProcessingDecision EvaluateClosedCandle(IngestionTarget target, CandleObserved observed)
+    {
+        var now = _timeProvider.GetUtcNow();
+        RememberClose(observed.Candle.CloseTimeUtc);
+        var decision = CandleProcessingDecision.Evaluate(
+            observed.Candle.IsClosed,
+            observed.Candle.CloseTimeUtc,
+            observed.ReceivedAtUtc,
+            now,
+            StaleAfter());
+        if (decision.CanUpdatePaper)
         {
-            Report(target, MarketDataFeedHealth.Degraded, "Channel consumer is behind.", observed.ReceivedAtUtc);
-            return;
+            Report(target, MarketDataFeedHealth.Healthy, null, observed.ReceivedAtUtc);
+            return decision;
         }
 
-        if (dataAge > staleAfter)
-        {
-            Report(target, MarketDataFeedHealth.Degraded, "Closed candle is older than the stale window.", closeTime);
-            return;
-        }
-
-        Report(target, MarketDataFeedHealth.Healthy, null, observed.ReceivedAtUtc);
+        var lastEvent = decision.Admission == CandleAdmission.StaleClose
+            ? observed.Candle.CloseTimeUtc
+            : observed.ReceivedAtUtc;
+        Report(target, MarketDataFeedHealth.Degraded, decision.Reason, lastEvent);
+        return decision;
     }
 
     private void RememberClose(DateTimeOffset closeTimeUtc)
@@ -520,11 +580,7 @@ public sealed class CandleIngestionService : BackgroundService
         return NonNegative(age).TotalSeconds;
     }
 
-    private TimeSpan StaleAfter()
-    {
-        var seconds = _marketDataOptions.Value.StaleAfterSeconds;
-        return TimeSpan.FromSeconds(seconds > 0 ? seconds : 1);
-    }
+    private TimeSpan StaleAfter() => CandleProcessingDecision.Window(_marketDataOptions.Value.StaleAfterSeconds);
 
     private void Report(IngestionTarget target, string status, string? detail, DateTimeOffset? lastEventUtc) =>
         _feedHealth.Report(target.Exchange.Value, target.Instrument, target.Timeframe.Code, status, detail, lastEventUtc);

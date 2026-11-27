@@ -9,6 +9,7 @@ public sealed class PortfolioLedger : AggregateRoot
     private readonly List<Position> _positions = [];
     private readonly Dictionary<InstrumentId, decimal> _marks = [];
     private readonly HashSet<string> _appliedTradeIds = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _appliedCandleKeys = new(StringComparer.Ordinal);
     private decimal _cash;
     private decimal _peakEquity;
     private decimal _dayStartEquity;
@@ -71,6 +72,20 @@ public sealed class PortfolioLedger : AggregateRoot
 
     public IReadOnlyCollection<string> AppliedExchangeTradeIds => _appliedTradeIds;
 
+    public IReadOnlyCollection<string> AppliedCandleKeys => _appliedCandleKeys;
+
+    public bool HasAppliedCandle(string candleKey) =>
+        _appliedCandleKeys.Contains(Guard.Required(candleKey, nameof(candleKey)));
+
+    public void MarkCandleApplied(string candleKey)
+    {
+        var normalized = Guard.Required(candleKey, nameof(candleKey));
+        if (!_appliedCandleKeys.Add(normalized))
+        {
+            throw new DomainException($"Candle '{normalized}' was already applied.");
+        }
+    }
+
     public static PortfolioLedger Create(
         decimal cash,
         string quoteAsset,
@@ -106,7 +121,8 @@ public sealed class PortfolioLedger : AggregateRoot
         DateTimeOffset updatedAtUtc,
         IReadOnlyList<Position> positions,
         IReadOnlyDictionary<InstrumentId, decimal> marks,
-        IReadOnlyCollection<string> appliedExchangeTradeIds)
+        IReadOnlyCollection<string> appliedExchangeTradeIds,
+        IReadOnlyCollection<string>? appliedCandleKeys = null)
     {
         ArgumentNullException.ThrowIfNull(positions);
         ArgumentNullException.ThrowIfNull(marks);
@@ -171,6 +187,18 @@ public sealed class PortfolioLedger : AggregateRoot
             if (!ledger._appliedTradeIds.Add(normalized))
             {
                 throw new DomainException($"Duplicate exchange trade id '{normalized}'.");
+            }
+        }
+
+        if (appliedCandleKeys is not null)
+        {
+            foreach (var candleKey in appliedCandleKeys)
+            {
+                var normalized = Guard.Required(candleKey, nameof(appliedCandleKeys));
+                if (!ledger._appliedCandleKeys.Add(normalized))
+                {
+                    throw new DomainException($"Duplicate applied candle '{normalized}'.");
+                }
             }
         }
 

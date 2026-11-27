@@ -4,7 +4,13 @@ namespace CryptoTrader.Exchanges.Okx.Rest;
 
 internal static class OkxPaths
 {
+    /// <summary>REST <c>/api/v5/market/books</c> snapshot size. This is not an incremental book.</summary>
     public const int OrderBookDepth = 50;
+
+    /// <summary>Public <c>books5</c> channel. Five levels, snapshot pushes, no sequence-gap recovery.</summary>
+    public const string WebsocketBookChannel = "books5";
+
+    public const int WebsocketBookDepth = 5;
 
     public static string Instruments(string instType, string? instId = null)
     {

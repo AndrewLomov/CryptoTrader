@@ -84,6 +84,7 @@ public class ExchangeRegistryTests
         ICandleConsumerCheckpoint.PaperConsumer.ShouldBe("paper");
         ((int)CandleConsumerState.Pending).ShouldBe(1);
         ((int)CandleConsumerState.Processed).ShouldBe(2);
+        ((int)CandleConsumerState.Skipped).ShouldBe(3);
     }
 
     [Fact]

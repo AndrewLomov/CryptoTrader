@@ -466,7 +466,7 @@ internal sealed class OkxPublicStream
                 return await HandleTradesAsync(subscription, writer, root, received, cancellationToken);
             }
 
-            if (string.Equals(channel, "books5", StringComparison.Ordinal) && subscription.IncludeOrderBook)
+            if (string.Equals(channel, OkxPaths.WebsocketBookChannel, StringComparison.Ordinal) && subscription.IncludeOrderBook)
             {
                 return await HandleBookAsync(subscription, writer, root, received, cancellationToken);
             }

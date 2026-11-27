@@ -14,13 +14,13 @@ internal sealed class CandleConsumerCheckpoint : ICandleConsumerCheckpoint
         _db = db;
     }
 
-    public Task MarkPendingAsync(
+    public Task<bool> MarkPendingAsync(
         Candle candle,
         string consumer,
         DateTimeOffset updatedAtUtc,
         CancellationToken cancellationToken)
     {
-        return UpsertAsync(candle, consumer, (int)CandleConsumerState.Pending, updatedAtUtc, cancellationToken);
+        return UpsertAsync(candle, consumer, CandleConsumerState.Pending, reason: null, updatedAtUtc, cancellationToken);
     }
 
     public Task MarkProcessedAsync(
@@ -29,7 +29,18 @@ internal sealed class CandleConsumerCheckpoint : ICandleConsumerCheckpoint
         DateTimeOffset updatedAtUtc,
         CancellationToken cancellationToken)
     {
-        return UpsertAsync(candle, consumer, (int)CandleConsumerState.Processed, updatedAtUtc, cancellationToken);
+        return UpsertAsync(candle, consumer, CandleConsumerState.Processed, reason: null, updatedAtUtc, cancellationToken);
+    }
+
+    public Task MarkSkippedAsync(
+        Candle candle,
+        string consumer,
+        string reason,
+        DateTimeOffset updatedAtUtc,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+        return UpsertAsync(candle, consumer, CandleConsumerState.Skipped, reason.Trim(), updatedAtUtc, cancellationToken);
     }
 
     public async Task<IReadOnlyList<Candle>> ListPendingCandlesAsync(
@@ -76,10 +87,11 @@ internal sealed class CandleConsumerCheckpoint : ICandleConsumerCheckpoint
         return candles;
     }
 
-    private async Task UpsertAsync(
+    private async Task<bool> UpsertAsync(
         Candle candle,
         string consumer,
-        int state,
+        CandleConsumerState state,
+        string? reason,
         DateTimeOffset updatedAtUtc,
         CancellationToken cancellationToken)
     {
@@ -93,7 +105,13 @@ internal sealed class CandleConsumerCheckpoint : ICandleConsumerCheckpoint
         var row = await _db.CandleConsumerCheckpoints.FindAsync(
             [exchangeId, instrumentId, timeframe, openTimeUtc, consumer],
             cancellationToken);
+        var current = row is null ? (CandleConsumerState?)null : (CandleConsumerState)row.State;
+        if (current is CandleConsumerState.Processed or CandleConsumerState.Skipped)
+        {
+            return false;
+        }
 
+        var skipReason = state == CandleConsumerState.Skipped ? TrimReason(reason) : null;
         if (row is null)
         {
             _db.CandleConsumerCheckpoints.Add(new CandleConsumerCheckpointRow
@@ -103,16 +121,25 @@ internal sealed class CandleConsumerCheckpoint : ICandleConsumerCheckpoint
                 Timeframe = timeframe,
                 OpenTimeUtc = openTimeUtc,
                 Consumer = consumer,
-                State = state,
+                State = (int)state,
+                SkipReason = skipReason,
                 UpdatedAtUtc = updatedAtUtc,
             });
         }
         else
         {
-            row.State = state;
+            row.State = (int)state;
+            row.SkipReason = skipReason;
             row.UpdatedAtUtc = updatedAtUtc;
         }
 
         await _db.SaveChangesAsync(cancellationToken);
+        return state == CandleConsumerState.Pending;
+    }
+
+    private static string TrimReason(string? reason)
+    {
+        var text = string.IsNullOrWhiteSpace(reason) ? "Skipped." : reason.Trim();
+        return text.Length <= 512 ? text : text[..512];
     }
 }

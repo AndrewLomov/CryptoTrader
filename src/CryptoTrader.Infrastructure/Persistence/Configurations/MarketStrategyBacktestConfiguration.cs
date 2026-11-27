@@ -43,6 +43,7 @@ internal sealed class CandleConsumerCheckpointRowConfiguration : IEntityTypeConf
         builder.Property(x => x.OpenTimeUtc).HasColumnName("open_time_utc");
         builder.Property(x => x.Consumer).HasColumnName("consumer").IsRequired();
         builder.Property(x => x.State).HasColumnName("state");
+        builder.Property(x => x.SkipReason).HasColumnName("skip_reason").HasMaxLength(512);
         builder.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
     }
 }
@@ -303,6 +304,14 @@ internal sealed class PaperAccountRowConfiguration : IEntityTypeConfiguration<Pa
         builder.Property(x => x.PositionsJson).HasColumnName("positions").HasColumnType("jsonb").IsRequired();
         builder.Property(x => x.MarksJson).HasColumnName("marks").HasColumnType("jsonb").IsRequired();
         builder.Property(x => x.AppliedExchangeTradeIdsJson).HasColumnName("applied_exchange_trade_ids").HasColumnType("jsonb").IsRequired();
+        builder.Property(x => x.AppliedCandleKeysJson)
+            .HasColumnName("applied_candle_keys")
+            .HasColumnType("jsonb")
+            .IsRequired()
+            .HasDefaultValueSql("'[]'::jsonb");
         builder.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
+        builder.HasIndex(x => new { x.ExchangeId, x.QuoteAsset })
+            .IsUnique()
+            .HasDatabaseName("ux_paper_accounts_exchange_quote");
     }
 }

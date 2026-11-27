@@ -5,6 +5,11 @@ using CryptoTrader.Exchanges.Okx.Rest;
 
 namespace CryptoTrader.Exchanges.Okx.Mapping;
 
+/// <summary>
+/// Parses one OKX book message. <c>books5</c> pushes and REST <c>/market/books</c> are snapshots.
+/// There is no delta application, checksum, or sequence-gap recovery. <c>IsConsistent</c> is false
+/// when this payload is not a usable snapshot, and true only means the snapshot parsed.
+/// </summary>
 internal static class OkxOrderBookParser
 {
     public static bool IsSnapshotMessage(JsonElement root)

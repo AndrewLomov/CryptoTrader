@@ -20,7 +20,14 @@ public static class OkxServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(configuration);
 
         services.AddOptions<OkxOptions>()
-            .Bind(configuration.GetSection(OkxOptions.SectionName));
+            .Bind(configuration.GetSection(OkxOptions.SectionName))
+            .PostConfigure(options =>
+            {
+                if (options.InstrumentTypes is { Length: > 0 })
+                {
+                    options.InstrumentTypes = OkxInstrumentTypes.Normalize(options.InstrumentTypes);
+                }
+            });
         services.TryAddSingleton(TimeProvider.System);
 
         services.AddHttpClient(OkxOptions.HttpClientName, (provider, client) =>
