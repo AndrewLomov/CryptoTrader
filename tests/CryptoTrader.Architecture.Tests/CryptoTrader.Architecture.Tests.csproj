@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Shouldly" />
+    <PackageReference Include="NetArchTest.Rules" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\CryptoTrader.Domain\CryptoTrader.Domain.csproj" />
+    <ProjectReference Include="..\..\src\CryptoTrader.Contracts\CryptoTrader.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\CryptoTrader.Strategies.Abstractions\CryptoTrader.Strategies.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\CryptoTrader.Exchanges.Abstractions\CryptoTrader.Exchanges.Abstractions.csproj" />
+    <ProjectReference Include="..\..\src\CryptoTrader.Application\CryptoTrader.Application.csproj" />
+    <ProjectReference Include="..\..\src\CryptoTrader.Infrastructure\CryptoTrader.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\CryptoTrader.Exchanges.Bybit\CryptoTrader.Exchanges.Bybit.csproj" />
+    <ProjectReference Include="..\..\src\CryptoTrader.Strategies.TrendFollowing\CryptoTrader.Strategies.TrendFollowing.csproj" />
+    <ProjectReference Include="..\..\src\CryptoTrader.Backtesting\CryptoTrader.Backtesting.csproj" />
+    <ProjectReference Include="..\..\src\CryptoTrader.Host\CryptoTrader.Host.csproj" />
+  </ItemGroup>
+</Project>

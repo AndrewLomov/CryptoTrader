@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="..\CryptoTrader.Domain\CryptoTrader.Domain.csproj" />
+    <ProjectReference Include="..\CryptoTrader.Strategies.Abstractions\CryptoTrader.Strategies.Abstractions.csproj" />
+    <ProjectReference Include="..\CryptoTrader.Exchanges.Abstractions\CryptoTrader.Exchanges.Abstractions.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Options" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+</Project>

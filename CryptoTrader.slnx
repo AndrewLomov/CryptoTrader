@@ -1,1 +1,30 @@
-<Solution />
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CryptoTrader.Domain/CryptoTrader.Domain.csproj" />
+    <Project Path="src/CryptoTrader.Contracts/CryptoTrader.Contracts.csproj" />
+    <Project Path="src/CryptoTrader.Strategies.Abstractions/CryptoTrader.Strategies.Abstractions.csproj" />
+    <Project Path="src/CryptoTrader.Exchanges.Abstractions/CryptoTrader.Exchanges.Abstractions.csproj" />
+    <Project Path="src/CryptoTrader.Application/CryptoTrader.Application.csproj" />
+    <Project Path="src/CryptoTrader.Infrastructure/CryptoTrader.Infrastructure.csproj" />
+    <Project Path="src/CryptoTrader.Exchanges.Bybit/CryptoTrader.Exchanges.Bybit.csproj" />
+    <Project Path="src/CryptoTrader.Strategies.TrendFollowing/CryptoTrader.Strategies.TrendFollowing.csproj" />
+    <Project Path="src/CryptoTrader.Backtesting/CryptoTrader.Backtesting.csproj" />
+    <Project Path="src/CryptoTrader.Host/CryptoTrader.Host.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CryptoTrader.Architecture.Tests/CryptoTrader.Architecture.Tests.csproj" />
+    <Project Path="tests/CryptoTrader.Domain.Tests/CryptoTrader.Domain.Tests.csproj" />
+    <Project Path="tests/CryptoTrader.Application.Tests/CryptoTrader.Application.Tests.csproj" />
+    <Project Path="tests/CryptoTrader.Strategies.Tests/CryptoTrader.Strategies.Tests.csproj" />
+    <Project Path="tests/CryptoTrader.Backtesting.Tests/CryptoTrader.Backtesting.Tests.csproj" />
+    <Project Path="tests/CryptoTrader.Exchanges.ContractTests/CryptoTrader.Exchanges.ContractTests.csproj" />
+    <Project Path="tests/CryptoTrader.IntegrationTests/CryptoTrader.IntegrationTests.csproj" />
+  </Folder>
+  <Folder Name="/Solution Items/">
+    <File Path="global.json" />
+    <File Path="Directory.Build.props" />
+    <File Path="Directory.Packages.props" />
+    <File Path=".editorconfig" />
+    <File Path=".gitignore" />
+  </Folder>
+</Solution>

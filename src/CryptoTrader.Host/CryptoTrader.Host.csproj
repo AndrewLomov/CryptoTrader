@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- Program.cs is owned by the Host agent. The project stays a library until that file exists. -->
+  <PropertyGroup>
+    <OutputType Condition="!Exists('$(MSBuildProjectDirectory)\Program.cs')">Library</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\CryptoTrader.Application\CryptoTrader.Application.csproj" />
+    <ProjectReference Include="..\CryptoTrader.Infrastructure\CryptoTrader.Infrastructure.csproj" />
+    <ProjectReference Include="..\CryptoTrader.Contracts\CryptoTrader.Contracts.csproj" />
+    <ProjectReference Include="..\CryptoTrader.Exchanges.Bybit\CryptoTrader.Exchanges.Bybit.csproj" />
+    <ProjectReference Include="..\CryptoTrader.Strategies.TrendFollowing\CryptoTrader.Strategies.TrendFollowing.csproj" />
+    <ProjectReference Include="..\CryptoTrader.Backtesting\CryptoTrader.Backtesting.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="Serilog.Sinks.Console" />
+    <PackageReference Include="Serilog.Settings.Configuration" />
+    <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+    <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
+    <PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+    <PackageReference Include="OpenTelemetry.Exporter.Prometheus.AspNetCore" />
+  </ItemGroup>
+</Project>
