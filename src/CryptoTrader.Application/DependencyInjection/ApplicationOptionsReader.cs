@@ -57,6 +57,12 @@ public static class ApplicationOptionsReader
                 errors,
                 "MarketData:UseClosedCandlesForStrategies");
             options.StaleAfterSeconds = ReadInt(section, "StaleAfterSeconds", options.StaleAfterSeconds, errors, "MarketData:StaleAfterSeconds");
+            var subscriptions = ReadSubscriptions(section);
+            if (subscriptions is not null)
+            {
+                options.Subscriptions = subscriptions;
+            }
+
             return options;
         });
 
@@ -96,6 +102,39 @@ public static class ApplicationOptionsReader
 
             options.TimeoutSeconds = ReadInt(section, "TimeoutSeconds", options.TimeoutSeconds, errors, "Bybit:TimeoutSeconds");
             options.MaxRequestsPerSecond = ReadInt(section, "MaxRequestsPerSecond", options.MaxRequestsPerSecond, errors, "Bybit:MaxRequestsPerSecond");
+            options.Enabled = ReadBool(section, "Enabled", options.Enabled, errors, "Bybit:Enabled");
+            options.ChannelCapacity = ReadInt(section, "ChannelCapacity", options.ChannelCapacity, errors, "Bybit:ChannelCapacity");
+            return options;
+        });
+
+    public static OkxOptions ReadOkx(IConfiguration configuration) =>
+        Read(configuration, static (section, errors) =>
+        {
+            var options = new OkxOptions();
+            options.Enabled = ReadBool(section, "Enabled", options.Enabled, errors, "Okx:Enabled");
+            options.RestBaseUrl = ReadString(section, "RestBaseUrl", options.RestBaseUrl);
+            options.PublicWebSocketUrl = ReadString(section, "PublicWebSocketUrl", options.PublicWebSocketUrl);
+            options.BusinessWebSocketUrl = ReadString(section, "BusinessWebSocketUrl", options.BusinessWebSocketUrl);
+            options.RequestTimeoutSeconds = ReadInt(section, "RequestTimeoutSeconds", options.RequestTimeoutSeconds, errors, "Okx:RequestTimeoutSeconds");
+            options.MaxCandlesPerRequest = ReadInt(section, "MaxCandlesPerRequest", options.MaxCandlesPerRequest, errors, "Okx:MaxCandlesPerRequest");
+            options.MaxHistoryCandlesPerRequest = ReadInt(
+                section,
+                "MaxHistoryCandlesPerRequest",
+                options.MaxHistoryCandlesPerRequest,
+                errors,
+                "Okx:MaxHistoryCandlesPerRequest");
+            options.MaxPages = ReadInt(section, "MaxPages", options.MaxPages, errors, "Okx:MaxPages");
+            options.ChannelCapacity = ReadInt(section, "ChannelCapacity", options.ChannelCapacity, errors, "Okx:ChannelCapacity");
+            options.AckTimeoutSeconds = ReadInt(section, "AckTimeoutSeconds", options.AckTimeoutSeconds, errors, "Okx:AckTimeoutSeconds");
+            options.PingIntervalSeconds = ReadInt(section, "PingIntervalSeconds", options.PingIntervalSeconds, errors, "Okx:PingIntervalSeconds");
+            var instrumentTypes = ReadArrayKeepEmpty(section, "InstrumentTypes");
+            if (instrumentTypes is not null)
+            {
+                options.InstrumentTypes = instrumentTypes
+                    .Select(value => value.ToUpperInvariant())
+                    .ToArray();
+            }
+
             return options;
         });
 
@@ -132,9 +171,54 @@ public static class ApplicationOptionsReader
         nameof(PersistenceOptions) => PersistenceOptions.SectionName,
         nameof(ApiOptions) => ApiOptions.SectionName,
         nameof(BybitOptions) => BybitOptions.SectionName,
+        nameof(OkxOptions) => OkxOptions.SectionName,
         nameof(ObservabilityOptions) => ObservabilityOptions.SectionName,
         _ => throw new InvalidOperationException($"Options section for {optionsType.Name} is not known."),
     };
+
+    private static MarketDataSubscriptionOptions[]? ReadSubscriptions(IConfiguration section)
+    {
+        var subscriptions = section.GetSection("Subscriptions");
+        if (!subscriptions.Exists())
+        {
+            return null;
+        }
+
+        return subscriptions.GetChildren().Select(child =>
+        {
+            var item = new MarketDataSubscriptionOptions
+            {
+                Exchange = ReadString(child, "Exchange", ""),
+                Instrument = ReadString(child, "Instrument", ""),
+            };
+            var timeframes = ReadArrayKeepEmpty(child, "Timeframes");
+            if (timeframes is not null)
+            {
+                item.Timeframes = timeframes;
+            }
+
+            return item;
+        }).ToArray();
+    }
+
+    private static string[]? ReadArrayKeepEmpty(IConfiguration section, string key)
+    {
+        var child = section.GetSection(key);
+        if (!child.Exists())
+        {
+            return null;
+        }
+
+        var values = child.GetChildren()
+            .Select(item => item.Value?.Trim() ?? "")
+            .ToArray();
+        if (values.Length == 0 && child.Value is not null)
+        {
+            return [child.Value.Trim()];
+        }
+
+        return values;
+    }
 
     private static string[]? ReadArray(IConfiguration section, string key)
     {

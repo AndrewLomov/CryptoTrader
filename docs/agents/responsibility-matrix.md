@@ -1,25 +1,19 @@
-# Матрица ответственности
+# Матрица ответственности — OKX и multi-exchange
 
-| Область | Ответственный | Проверяет |
+| Область | Владелец | Проверяют |
 |---|---|---|
-| Архитектура Solution | .NET Architect | Lead Agent |
-| Domain | .NET Architect | C# Developer, QA |
-| Application | C# Developer | .NET Architect |
-| Exchange Abstractions | Trading Systems Engineer | .NET Architect |
-| Bybit Connector | Trading Systems Engineer | QA |
-| Market Data | Trading Systems Engineer | C# Developer, QA |
-| Индикаторы | Quantitative Developer | C# Developer, QA |
-| Стратегии | Quantitative Developer | Trading Systems Engineer, QA |
-| Risk Manager | C# Developer | Quant, Trading Systems, QA |
-| Order Execution | Trading Systems Engineer | C# Developer, QA |
-| Backtesting | Quantitative Developer | Trading Systems Engineer, QA |
-| PostgreSQL | Database Engineer | C# Developer, QA |
-| EF Core | Database Engineer | .NET Architect |
-| API | C# Developer | QA, .NET Architect |
-| Тестирование | QA Automation Engineer | Все агенты |
-| Docker | DevOps Engineer | C# Developer |
-| CI/CD | DevOps Engineer | QA |
-| Monitoring | DevOps Engineer | Trading Systems Engineer |
-| Финальная интеграция | Lead Agent | Все агенты |
+| Multi-exchange architecture | Agent 1 | Lead, Agent 2, Agent 4, Agent 6 |
+| Exchange registry | Agent 1 | Agent 2, Agent 4, Agent 6 |
+| Host / DI / ingestion | Agent 2 | Agent 1, Agent 4, Agent 6 |
+| OKX API specification | Agent 8 | Agent 4, Agent 6 |
+| OKX adapter | Agent 4 | Agent 8, Agent 2, Agent 6 |
+| Bybit regression | Agent 4 | Agent 6 |
+| Instrument identity / capabilities | Agent 1 | Agent 3, Agent 4, Agent 5, Agent 6 |
+| Volume and contract semantics | Agent 3 | Agent 1, Agent 4, Agent 5, Agent 8 |
+| PostgreSQL schema / migrations | Agent 5 | Agent 1, Agent 2, Agent 6 |
+| Checkpoint / replay | Agent 5 | Agent 2, Agent 4, Agent 6 |
+| Automated tests | Agent 6 | Все агенты передают сценарии |
+| CI / Docker / operations | Agent 7 | Agent 2, Agent 5, Agent 6 |
+| Final integration | Lead | Все агенты |
 
-Правило единственного владельца: файл из таблицы владения в `team-structure.md` меняет только указанный агент. Изменение общего контракта возвращается Lead и .NET Architect, а не вносится в чужой проект.
+Один файл — один владелец из `team-structure.md`. Reviewer не правит чужой файл. Общий контракт меняет только Lead в `docs/agents/multi-exchange-contract.md`.

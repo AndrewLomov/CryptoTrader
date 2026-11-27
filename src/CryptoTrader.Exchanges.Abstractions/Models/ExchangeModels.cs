@@ -4,6 +4,10 @@ using CryptoTrader.Domain.Trading;
 
 namespace CryptoTrader.Exchanges.Abstractions.Models;
 
+/// <summary>
+/// Public adapter capabilities. SupportsLinearPerpetual is public linear market data.
+/// SupportsFuturesAccounting stays false until futures accounting exists.
+/// </summary>
 public sealed record ExchangeCapabilities(
     bool SupportsSpot,
     bool SupportsLinearPerpetual,
@@ -11,7 +15,8 @@ public sealed record ExchangeCapabilities(
     bool SupportsOrderBook,
     bool SupportsFundingRates,
     bool SupportsWebSocket,
-    bool SupportsPrivateAccount);
+    bool SupportsPrivateAccount,
+    bool SupportsFuturesAccounting = false);
 
 public sealed record MarketSubscription(
     InstrumentId Instrument,

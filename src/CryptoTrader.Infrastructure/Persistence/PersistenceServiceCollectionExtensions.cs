@@ -1,3 +1,4 @@
+using CryptoTrader.Application.Abstractions.MarketData;
 using CryptoTrader.Application.Abstractions.Persistence;
 using CryptoTrader.Application.Configuration;
 using CryptoTrader.Infrastructure.Persistence.Repositories;
@@ -30,6 +31,7 @@ public static class PersistenceServiceCollectionExtensions
         });
 
         services.AddScoped<ICandleRepository, CandleRepository>();
+        services.AddScoped<ICandleConsumerCheckpoint, CandleConsumerCheckpoint>();
         services.AddScoped<IInstrumentRepository, InstrumentRepository>();
         services.AddScoped<IOrderRepository, OrderRepository>();
         services.AddScoped<IPositionRepository, PositionRepository>();

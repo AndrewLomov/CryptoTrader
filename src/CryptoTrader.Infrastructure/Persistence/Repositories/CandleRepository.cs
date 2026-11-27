@@ -66,6 +66,9 @@ internal sealed class CandleRepository : ICandleRepository
                     row.Low = candle.Low;
                     row.Close = candle.Close;
                     row.Volume = candle.Volume;
+                    row.VolumeUnit = (int)candle.VolumeUnit;
+                    row.QuoteVolume = candle.QuoteVolume;
+                    row.BaseVolume = candle.BaseVolume;
                     row.CloseTimeUtc = candle.CloseTimeUtc;
                     row.IsClosed = candle.IsClosed;
                 }
@@ -122,10 +125,13 @@ internal sealed class CandleRepository : ICandleRepository
         Low = candle.Low,
         Close = candle.Close,
         Volume = candle.Volume,
+        VolumeUnit = (int)candle.VolumeUnit,
+        QuoteVolume = candle.QuoteVolume,
+        BaseVolume = candle.BaseVolume,
         IsClosed = candle.IsClosed,
     };
 
-    private static Candle ToCandle(CandleRow row) => Candle.Create(
+    internal static Candle ToCandle(CandleRow row) => Candle.Create(
         new ExchangeId(row.ExchangeId),
         new InstrumentId(row.InstrumentId),
         Timeframe.Parse(row.Timeframe),
@@ -136,7 +142,10 @@ internal sealed class CandleRepository : ICandleRepository
         row.Low,
         row.Close,
         row.Volume,
-        row.IsClosed);
+        row.IsClosed,
+        StoredEnum.FromInt32<VolumeUnit>(row.VolumeUnit, "volume_unit"),
+        row.QuoteVolume,
+        row.BaseVolume);
 
     private readonly record struct CandleIdentity(string ExchangeId, string InstrumentId, string Timeframe, DateTimeOffset OpenTimeUtc)
     {

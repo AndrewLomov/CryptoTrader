@@ -185,6 +185,11 @@ public sealed class BybitOptionsValidator : IValidateOptions<BybitOptions>
             failures.Add("Bybit:MaxRequestsPerSecond must be from 1 through 10.");
         }
 
+        if (options.ChannelCapacity <= 0)
+        {
+            failures.Add("Bybit:ChannelCapacity must be greater than zero.");
+        }
+
         return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
     }
 
@@ -230,4 +235,92 @@ public sealed class ObservabilityOptionsValidator : IValidateOptions<Observabili
 
         return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
     }
+}
+
+public sealed class OkxOptionsValidator : IValidateOptions<OkxOptions>
+{
+    public ValidateOptionsResult Validate(string? name, OkxOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        var failures = new List<string>();
+        if (!IsScheme(options.RestBaseUrl, "https"))
+        {
+            failures.Add("Okx:RestBaseUrl must be an absolute https URL.");
+        }
+
+        if (!IsScheme(options.PublicWebSocketUrl, "wss"))
+        {
+            failures.Add("Okx:PublicWebSocketUrl must be an absolute wss URL.");
+        }
+
+        if (!IsScheme(options.BusinessWebSocketUrl, "wss"))
+        {
+            failures.Add("Okx:BusinessWebSocketUrl must be an absolute wss URL.");
+        }
+
+        if (options.RequestTimeoutSeconds <= 0 || options.RequestTimeoutSeconds > 120)
+        {
+            failures.Add("Okx:RequestTimeoutSeconds must be from 1 through 120.");
+        }
+
+        if (options.MaxCandlesPerRequest <= 0 || options.MaxCandlesPerRequest > 300)
+        {
+            failures.Add("Okx:MaxCandlesPerRequest must be from 1 through 300.");
+        }
+
+        if (options.MaxHistoryCandlesPerRequest <= 0 || options.MaxHistoryCandlesPerRequest > 300)
+        {
+            failures.Add("Okx:MaxHistoryCandlesPerRequest must be from 1 through 300.");
+        }
+
+        if (options.MaxPages <= 0)
+        {
+            failures.Add("Okx:MaxPages must be greater than zero.");
+        }
+
+        if (options.ChannelCapacity <= 0)
+        {
+            failures.Add("Okx:ChannelCapacity must be greater than zero.");
+        }
+
+        if (options.AckTimeoutSeconds <= 0 || options.AckTimeoutSeconds > 120)
+        {
+            failures.Add("Okx:AckTimeoutSeconds must be from 1 through 120.");
+        }
+
+        if (options.PingIntervalSeconds <= 0 || options.PingIntervalSeconds >= 30)
+        {
+            failures.Add("Okx:PingIntervalSeconds must be from 1 through 29.");
+        }
+
+        if (options.InstrumentTypes is null || options.InstrumentTypes.Length == 0)
+        {
+            failures.Add("Okx:InstrumentTypes requires at least one instrument type.");
+        }
+        else
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var type in options.InstrumentTypes)
+            {
+                if (string.IsNullOrWhiteSpace(type)
+                    || (!string.Equals(type, "SPOT", StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(type, "SWAP", StringComparison.OrdinalIgnoreCase)))
+                {
+                    failures.Add($"Okx:InstrumentTypes contains '{type}', which is not SPOT or SWAP.");
+                    continue;
+                }
+
+                if (!seen.Add(type))
+                {
+                    failures.Add($"Okx:InstrumentTypes contains duplicate '{type}'.");
+                }
+            }
+        }
+
+        return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
+    }
+
+    private static bool IsScheme(string? value, string scheme) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri)
+        && string.Equals(uri.Scheme, scheme, StringComparison.OrdinalIgnoreCase);
 }

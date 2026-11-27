@@ -18,21 +18,31 @@ internal sealed class BybitPublicStream
 {
     private const int MaxMessageBytes = 2_000_000;
     private const int MaxOrderBookReloads = 3;
+    private const int MaxAckAttempts = 3;
+    private static readonly TimeSpan AckTimeout = TimeSpan.FromSeconds(10);
 
     private readonly ILogger _logger;
     private readonly TimeProvider _time;
+    private readonly int _channelCapacity;
     private readonly Func<CancellationToken, Task<OrderBookSnapshot>> _reloadOrderBook;
 
     public BybitPublicStream(
         ILogger logger,
         TimeProvider time,
+        int channelCapacity,
         Func<CancellationToken, Task<OrderBookSnapshot>> reloadOrderBook)
     {
         ArgumentNullException.ThrowIfNull(logger);
         ArgumentNullException.ThrowIfNull(time);
         ArgumentNullException.ThrowIfNull(reloadOrderBook);
+        if (channelCapacity <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(channelCapacity), "Channel capacity must be positive.");
+        }
+
         _logger = logger;
         _time = time;
+        _channelCapacity = channelCapacity;
         _reloadOrderBook = reloadOrderBook;
     }
 
@@ -46,8 +56,9 @@ internal sealed class BybitPublicStream
         ArgumentNullException.ThrowIfNull(subscription);
         ArgumentNullException.ThrowIfNull(webSocketUri);
         ArgumentNullException.ThrowIfNull(topics);
-        var channel = Channel.CreateUnbounded<MarketEvent>(new UnboundedChannelOptions
+        var channel = Channel.CreateBounded<MarketEvent>(new BoundedChannelOptions(_channelCapacity)
         {
+            FullMode = BoundedChannelFullMode.Wait,
             SingleReader = true,
             SingleWriter = true,
         });
@@ -88,9 +99,11 @@ internal sealed class BybitPublicStream
         try
         {
             var delaySeconds = 1;
+            var ackFailures = 0;
             while (!cancellationToken.IsCancellationRequested)
             {
                 var opened = false;
+                var acknowledged = false;
                 try
                 {
                     await RunSessionAsync(
@@ -99,18 +112,46 @@ internal sealed class BybitPublicStream
                         webSocketUri,
                         topics,
                         () => opened = true,
+                        () => acknowledged = true,
                         writer,
                         cancellationToken);
+                    if (acknowledged)
+                    {
+                        ackFailures = 0;
+                    }
+                    else if (!cancellationToken.IsCancellationRequested)
+                    {
+                        ackFailures++;
+                    }
                 }
                 catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
                 {
                     break;
                 }
+                catch (BybitSubscriptionException exception)
+                {
+                    ackFailures++;
+                    _logger.LogWarning(
+                        "Bybit public websocket subscription failed ({ExceptionType}).",
+                        exception.GetType().Name);
+                }
                 catch (Exception exception)
                 {
+                    if (!acknowledged)
+                    {
+                        ackFailures++;
+                    }
+
                     _logger.LogWarning(
                         "Bybit public websocket disconnected ({ExceptionType}).",
                         exception.GetType().Name);
+                }
+
+                if (ackFailures >= MaxAckAttempts)
+                {
+                    writer.TryComplete(new BybitSubscriptionException(
+                        "Bybit public websocket subscription was not acknowledged."));
+                    return;
                 }
 
                 if (cancellationToken.IsCancellationRequested)
@@ -118,7 +159,7 @@ internal sealed class BybitPublicStream
                     break;
                 }
 
-                if (opened)
+                if (opened && acknowledged)
                 {
                     delaySeconds = 1;
                 }
@@ -143,6 +184,7 @@ internal sealed class BybitPublicStream
         Uri webSocketUri,
         IReadOnlyList<string> topics,
         Action onOpen,
+        Action onAcknowledged,
         ChannelWriter<MarketEvent> writer,
         CancellationToken cancellationToken)
     {
@@ -155,14 +197,19 @@ internal sealed class BybitPublicStream
 
         var session = new SessionState();
         using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        var receiveTask = ReceiveAsync(socket, sendLock, subscription, market, session, writer, sessionCts.Token);
+        var receiveTask = ReceiveAsync(socket, sendLock, subscription, market, session, writer, () =>
+        {
+            session.Acknowledged = true;
+            onAcknowledged();
+        }, sessionCts.Token);
         var pingTask = PingAsync(socket, sendLock, sessionCts.Token);
-        var finished = await Task.WhenAny(receiveTask, pingTask);
+        var ackTask = WatchAckAsync(session, sessionCts.Token);
+        var finished = await Task.WhenAny(receiveTask, pingTask, ackTask);
         sessionCts.Cancel();
         Abort(socket);
         try
         {
-            await Task.WhenAll(receiveTask, pingTask);
+            await Task.WhenAll(receiveTask, pingTask, ackTask);
         }
         catch (Exception)
         {
@@ -182,6 +229,17 @@ internal sealed class BybitPublicStream
         }
     }
 
+    private static async Task WatchAckAsync(SessionState session, CancellationToken cancellationToken)
+    {
+        await Task.Delay(AckTimeout, cancellationToken);
+        if (!session.Acknowledged)
+        {
+            throw new BybitSubscriptionException("Bybit public websocket subscription was not acknowledged before the timeout.");
+        }
+
+        await Task.Delay(Timeout.Infinite, cancellationToken);
+    }
+
     private async Task ReceiveAsync(
         ClientWebSocket socket,
         SemaphoreSlim sendLock,
@@ -189,6 +247,7 @@ internal sealed class BybitPublicStream
         BybitMarket market,
         SessionState session,
         ChannelWriter<MarketEvent> writer,
+        Action onAcknowledged,
         CancellationToken cancellationToken)
     {
         var buffer = new byte[8192];
@@ -223,7 +282,7 @@ internal sealed class BybitPublicStream
             }
 
             var json = Encoding.UTF8.GetString(message.GetBuffer(), 0, (int)message.Length);
-            if (!await HandleTextAsync(socket, sendLock, subscription, market, session, writer, json, cancellationToken))
+            if (!await HandleTextAsync(socket, sendLock, subscription, market, session, writer, onAcknowledged, json, cancellationToken))
             {
                 return;
             }
@@ -237,6 +296,7 @@ internal sealed class BybitPublicStream
         BybitMarket market,
         SessionState session,
         ChannelWriter<MarketEvent> writer,
+        Action onAcknowledged,
         string json,
         CancellationToken cancellationToken)
     {
@@ -265,7 +325,25 @@ internal sealed class BybitPublicStream
                 {
                     await SendAsync(socket, "{\"op\":\"pong\"}", sendLock, cancellationToken);
                 }
-                else if (root.TryGetProperty("success", out var success) && success.ValueKind == JsonValueKind.False)
+                else if (string.Equals(operation.GetString(), "subscribe", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (!root.TryGetProperty("success", out var success))
+                    {
+                        return true;
+                    }
+
+                    if (success.ValueKind == JsonValueKind.False)
+                    {
+                        throw new BybitSubscriptionException("Bybit public websocket subscription was rejected.");
+                    }
+
+                    if (success.ValueKind == JsonValueKind.True)
+                    {
+                        session.Acknowledged = true;
+                        onAcknowledged();
+                    }
+                }
+                else if (root.TryGetProperty("success", out var rejected) && rejected.ValueKind == JsonValueKind.False)
                 {
                     var reason = SafeText(ReadString(root, "ret_msg") ?? BybitResponses.ReadMessage(root));
                     _logger.LogWarning("Bybit public websocket operation was rejected ({Reason}).", reason ?? "no message");
@@ -284,17 +362,17 @@ internal sealed class BybitPublicStream
             var exchangeTime = BybitJson.ReadUnixTime(root, "ts", root, _time);
             if (topic.StartsWith("kline.", StringComparison.Ordinal))
             {
-                return HandleKline(subscription, writer, root, exchangeTime, received);
+                return await HandleKline(subscription, writer, root, exchangeTime, received, cancellationToken);
             }
 
             if (topic.StartsWith("tickers.", StringComparison.Ordinal))
             {
-                return HandleTicker(subscription, session, writer, root, exchangeTime, received);
+                return await HandleTicker(subscription, session, writer, root, exchangeTime, received, cancellationToken);
             }
 
             if (topic.StartsWith("publicTrade.", StringComparison.Ordinal))
             {
-                return HandleTrades(subscription, writer, root, exchangeTime, received);
+                return await HandleTrades(subscription, writer, root, exchangeTime, received, cancellationToken);
             }
 
             if (topic.StartsWith("orderbook.", StringComparison.Ordinal) && subscription.IncludeOrderBook)
@@ -306,12 +384,13 @@ internal sealed class BybitPublicStream
         return true;
     }
 
-    private bool HandleKline(
+    private async Task<bool> HandleKline(
         MarketSubscription subscription,
         ChannelWriter<MarketEvent> writer,
         JsonElement root,
         DateTimeOffset exchangeTime,
-        DateTimeOffset received)
+        DateTimeOffset received,
+        CancellationToken cancellationToken)
     {
         if (subscription.Timeframe is null
             || !root.TryGetProperty("data", out var data)
@@ -334,12 +413,12 @@ internal sealed class BybitPublicStream
                 continue;
             }
 
-            if (!Publish(writer, new CandleObserved(
+            if (!await WriteEventAsync(writer, new CandleObserved(
                 ExchangeId.Bybit,
                 subscription.Instrument,
                 exchangeTime,
                 received,
-                candle)))
+                candle), cancellationToken))
             {
                 return false;
             }
@@ -348,13 +427,14 @@ internal sealed class BybitPublicStream
         return true;
     }
 
-    private static bool HandleTicker(
+    private async Task<bool> HandleTicker(
         MarketSubscription subscription,
         SessionState session,
         ChannelWriter<MarketEvent> writer,
         JsonElement root,
         DateTimeOffset exchangeTime,
-        DateTimeOffset received)
+        DateTimeOffset received,
+        CancellationToken cancellationToken)
     {
         if (!subscription.IncludeTicker || !root.TryGetProperty("data", out var data))
         {
@@ -389,15 +469,16 @@ internal sealed class BybitPublicStream
             last,
             exchangeTime,
             received);
-        return Publish(writer, new TickerUpdated(ExchangeId.Bybit, subscription.Instrument, exchangeTime, received, ticker));
+        return await WriteEventAsync(writer, new TickerUpdated(ExchangeId.Bybit, subscription.Instrument, exchangeTime, received, ticker), cancellationToken);
     }
 
-    private static bool HandleTrades(
+    private async Task<bool> HandleTrades(
         MarketSubscription subscription,
         ChannelWriter<MarketEvent> writer,
         JsonElement root,
         DateTimeOffset exchangeTime,
-        DateTimeOffset received)
+        DateTimeOffset received,
+        CancellationToken cancellationToken)
     {
         if (!subscription.IncludeTrades
             || !root.TryGetProperty("data", out var data)
@@ -426,14 +507,14 @@ internal sealed class BybitPublicStream
                 "Sell" => OrderSide.Sell,
                 _ => (OrderSide?)null,
             };
-            if (!Publish(writer, new PublicTradeObserved(
+            if (!await WriteEventAsync(writer, new PublicTradeObserved(
                 ExchangeId.Bybit,
                 subscription.Instrument,
                 tradeTime,
                 received,
                 new Price(price),
                 new Quantity(quantity),
-                side)))
+                side), cancellationToken))
             {
                 return false;
             }
@@ -466,12 +547,12 @@ internal sealed class BybitPublicStream
             received);
         if (applied.Publish && applied.Snapshot is not null)
         {
-            if (!Publish(writer, new OrderBookUpdated(
+            if (!await WriteEventAsync(writer, new OrderBookUpdated(
                 ExchangeId.Bybit,
                 subscription.Instrument,
                 exchangeTime,
                 received,
-                applied.Snapshot)))
+                applied.Snapshot), cancellationToken))
             {
                 return false;
             }
@@ -499,22 +580,26 @@ internal sealed class BybitPublicStream
             var inconsistent = snapshot.IsConsistent
                 ? BybitOrderBookParser.Inconsistent(subscription.Instrument, snapshot.Sequence, snapshot.ExchangeTimeUtc, _time.GetUtcNow())
                 : snapshot;
-            Publish(writer, new OrderBookUpdated(
+            if (!await WriteEventAsync(writer, new OrderBookUpdated(
                 ExchangeId.Bybit,
                 subscription.Instrument,
                 inconsistent.ExchangeTimeUtc,
                 inconsistent.ReceivedAtUtc,
-                inconsistent));
+                inconsistent), cancellationToken))
+            {
+                return false;
+            }
+
             throw new InvalidOperationException("Bybit order book snapshot was inconsistent.");
         }
 
         session.Book.Install(snapshot);
-        return Publish(writer, new OrderBookUpdated(
+        return await WriteEventAsync(writer, new OrderBookUpdated(
             ExchangeId.Bybit,
             subscription.Instrument,
             snapshot.ExchangeTimeUtc,
             snapshot.ReceivedAtUtc,
-            snapshot));
+            snapshot), cancellationToken);
     }
 
     private static async Task PingAsync(ClientWebSocket socket, SemaphoreSlim sendLock, CancellationToken cancellationToken)
@@ -651,8 +736,29 @@ internal sealed class BybitPublicStream
         return value.Length <= 180 ? value : value[..180];
     }
 
-    private static bool Publish(ChannelWriter<MarketEvent> writer, MarketEvent marketEvent) =>
-        writer.TryWrite(marketEvent);
+    private async Task<bool> WriteEventAsync(
+        ChannelWriter<MarketEvent> writer,
+        MarketEvent marketEvent,
+        CancellationToken cancellationToken)
+    {
+        if (writer.TryWrite(marketEvent))
+        {
+            return true;
+        }
+
+        _logger.LogWarning(
+            "Bybit public websocket channel is full; waiting to write {EventType}.",
+            marketEvent.GetType().Name);
+        try
+        {
+            await writer.WriteAsync(marketEvent, cancellationToken);
+            return true;
+        }
+        catch (ChannelClosedException)
+        {
+            return false;
+        }
+    }
 
     private static void Abort(ClientWebSocket socket)
     {
@@ -667,6 +773,8 @@ internal sealed class BybitPublicStream
 
     private sealed class SessionState
     {
+        public volatile bool Acknowledged;
+
         public int ConsecutiveReloads { get; set; }
 
         public TickerState Ticker { get; } = new();
@@ -707,5 +815,13 @@ internal sealed class BybitPublicStream
                 && BybitJson.TryReadDecimal(element, out value)
                 && value > 0m;
         }
+    }
+}
+
+internal sealed class BybitSubscriptionException : InvalidOperationException
+{
+    public BybitSubscriptionException(string message)
+        : base(message)
+    {
     }
 }

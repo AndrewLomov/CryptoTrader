@@ -16,7 +16,11 @@ public sealed record Instrument
         decimal minQuantity,
         decimal? minNotional,
         decimal? contractMultiplier,
-        bool isTradingEnabled)
+        bool isTradingEnabled,
+        decimal? contractValue,
+        string? contractValueCurrency,
+        string? settlementCurrency,
+        string? contractKind)
     {
         Id = id;
         Exchange = exchange;
@@ -30,6 +34,10 @@ public sealed record Instrument
         MinNotional = minNotional;
         ContractMultiplier = contractMultiplier;
         IsTradingEnabled = isTradingEnabled;
+        ContractValue = contractValue;
+        ContractValueCurrency = contractValueCurrency;
+        SettlementCurrency = settlementCurrency;
+        ContractKind = contractKind;
     }
 
     public InstrumentId Id { get; }
@@ -56,6 +64,22 @@ public sealed record Instrument
 
     public bool IsTradingEnabled { get; }
 
+    public decimal? ContractValue { get; }
+
+    public string? ContractValueCurrency { get; }
+
+    public string? SettlementCurrency { get; }
+
+    public string? ContractKind { get; }
+
+    public bool HasCompleteLinearContractSpec =>
+        Type == InstrumentType.LinearPerpetual
+        && ContractValue is > 0
+        && !string.IsNullOrWhiteSpace(ContractValueCurrency)
+        && !string.IsNullOrWhiteSpace(SettlementCurrency)
+        && string.Equals(ContractKind, "linear", StringComparison.Ordinal)
+        && ContractMultiplier is not <= 0;
+
     public static Instrument Create(
         InstrumentId id,
         ExchangeId exchange,
@@ -68,7 +92,11 @@ public sealed record Instrument
         decimal minQuantity,
         decimal? minNotional,
         decimal? contractMultiplier,
-        bool isTradingEnabled)
+        bool isTradingEnabled,
+        decimal? contractValue = null,
+        string? contractValueCurrency = null,
+        string? settlementCurrency = null,
+        string? contractKind = null)
     {
         Guard.Defined(type, nameof(type));
         exchangeSymbol = Guard.Required(exchangeSymbol, nameof(exchangeSymbol));
@@ -87,12 +115,60 @@ public sealed record Instrument
             Guard.Positive(minNotional.Value, nameof(minNotional));
         }
 
-        switch (type)
+        if (type == InstrumentType.Spot)
         {
-            case InstrumentType.Spot when contractMultiplier is not null:
+            if (contractMultiplier is not null)
+            {
                 throw new DomainException("Spot instruments cannot have a contract multiplier.");
-            case InstrumentType.LinearPerpetual when contractMultiplier is null || contractMultiplier <= 0:
-                throw new DomainException("Linear perpetual instruments require a contract multiplier greater than zero.");
+            }
+
+            if (contractValue is not null
+                || contractValueCurrency is not null
+                || settlementCurrency is not null
+                || contractKind is not null)
+            {
+                throw new DomainException("Spot instruments cannot have contract value, currencies, or contract kind.");
+            }
+        }
+        else if (type == InstrumentType.LinearPerpetual)
+        {
+            if (contractMultiplier is <= 0)
+            {
+                throw new DomainException("Linear perpetual contract multiplier must be greater than zero when it is set.");
+            }
+
+            var faceValue = contractValue is > 0
+                && !string.IsNullOrWhiteSpace(contractValueCurrency)
+                && !string.IsNullOrWhiteSpace(settlementCurrency)
+                && contractKind is not null
+                && string.Equals(contractKind.Trim(), "linear", StringComparison.OrdinalIgnoreCase);
+            if (contractMultiplier is null && !faceValue)
+            {
+                throw new DomainException("Linear perpetual instruments require a contract multiplier greater than zero or a complete linear contract value.");
+            }
+        }
+
+        if (contractValue is not null)
+        {
+            Guard.Positive(contractValue.Value, nameof(contractValue));
+        }
+
+        var storedContractValueCurrency = contractValueCurrency is null
+            ? null
+            : Guard.Required(contractValueCurrency, nameof(contractValueCurrency));
+        var storedSettlementCurrency = settlementCurrency is null
+            ? null
+            : Guard.Required(settlementCurrency, nameof(settlementCurrency));
+        string? storedContractKind = null;
+        if (contractKind is not null)
+        {
+            var kind = Guard.Required(contractKind, nameof(contractKind));
+            if (!string.Equals(kind, "linear", StringComparison.OrdinalIgnoreCase))
+            {
+                throw new DomainException("Contract kind must be linear.");
+            }
+
+            storedContractKind = "linear";
         }
 
         return new Instrument(
@@ -107,7 +183,11 @@ public sealed record Instrument
             minQuantity,
             minNotional,
             contractMultiplier,
-            isTradingEnabled);
+            isTradingEnabled,
+            contractValue,
+            storedContractValueCurrency,
+            storedSettlementCurrency,
+            storedContractKind);
     }
 
     public decimal FloorQuantity(decimal quantity) => DecimalRounding.FloorToStep(quantity, QuantityStep);

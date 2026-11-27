@@ -3,7 +3,9 @@ using CryptoTrader.Application.DependencyInjection;
 using CryptoTrader.Application.Observability;
 using CryptoTrader.Backtesting;
 using CryptoTrader.Contracts.Responses;
+using CryptoTrader.Exchanges.Abstractions;
 using CryptoTrader.Exchanges.Bybit;
+using CryptoTrader.Exchanges.Okx;
 using CryptoTrader.Host.Api;
 using CryptoTrader.Host.Health;
 using CryptoTrader.Host.MarketData;
@@ -12,6 +14,7 @@ using CryptoTrader.Host.Security;
 using CryptoTrader.Infrastructure.Paper;
 using CryptoTrader.Infrastructure.Persistence;
 using CryptoTrader.Strategies.TrendFollowing;
+using Microsoft.Extensions.Options;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
@@ -31,6 +34,9 @@ builder.Host.UseSerilog((context, _, loggerConfiguration) =>
 builder.Services.AddApplication(builder.Configuration);
 builder.Services.AddPersistence(builder.Configuration);
 builder.Services.AddBybit(builder.Configuration);
+builder.Services.AddOkx(builder.Configuration);
+builder.Services.AddSingleton<IExchangeRegistry>(sp => new ExchangeRegistry(sp.GetServices<IExchangeAdapter>()));
+builder.Services.AddSingleton<MarketDataFeedHealth>();
 builder.Services.AddPaperExecution();
 builder.Services.AddTrendFollowing();
 builder.Services.AddBacktesting();
@@ -76,6 +82,11 @@ if (observability.ExposePrometheus)
 }
 
 app.MapGet("/health/live", () => Results.Ok(new LiveHealthResponse("Healthy")));
+app.MapGet("/health/feeds", (MarketDataFeedHealth feeds, IOptions<MarketDataOptions> marketData, TimeProvider time) =>
+{
+    var staleAfter = TimeSpan.FromSeconds(marketData.Value.StaleAfterSeconds);
+    return Results.Ok(feeds.Snapshot(staleAfter, time.GetUtcNow()));
+});
 app.MapGet("/health/ready", async (DatabaseReadyProbe probe, CancellationToken cancellationToken) =>
 {
     var ready = await probe.CheckAsync(cancellationToken);

@@ -13,6 +13,8 @@ public sealed class BybitExchangeAdapter : IExchangeAdapter
 {
     public const string Code = "BYBIT";
 
+    private readonly BybitOrderBookClient _orderBook;
+
     public static readonly ExchangeCapabilities PublicCapabilities = new(
         SupportsSpot: true,
         SupportsLinearPerpetual: true,
@@ -39,6 +41,7 @@ public sealed class BybitExchangeAdapter : IExchangeAdapter
         Account = account;
         Instruments = instruments;
         Funding = funding;
+        _orderBook = new BybitOrderBookClient(marketData);
     }
 
     public string ExchangeCode => Code;
@@ -52,6 +55,10 @@ public sealed class BybitExchangeAdapter : IExchangeAdapter
     public IInstrumentMetadataClient Instruments { get; }
 
     public BybitFundingClient Funding { get; }
+
+    IOrderBookClient? IExchangeAdapter.OrderBook => _orderBook;
+
+    IFundingRateClient? IExchangeAdapter.FundingRates => Funding;
 
     public ExchangeCapabilities Capabilities => PublicCapabilities;
 }

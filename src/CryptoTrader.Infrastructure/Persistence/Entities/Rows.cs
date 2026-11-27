@@ -46,6 +46,14 @@ public sealed class InstrumentRow
 
     public decimal? ContractMultiplier { get; set; }
 
+    public decimal? ContractValue { get; set; }
+
+    public string? ContractValueCurrency { get; set; }
+
+    public string? SettlementCurrency { get; set; }
+
+    public string? ContractKind { get; set; }
+
     public bool IsTradingEnabled { get; set; }
 }
 
@@ -86,7 +94,30 @@ public sealed class CandleRow
 
     public decimal Volume { get; set; }
 
+    public int VolumeUnit { get; set; } = 1;
+
+    public decimal? QuoteVolume { get; set; }
+
+    public decimal? BaseVolume { get; set; }
+
     public bool IsClosed { get; set; }
+}
+
+public sealed class CandleConsumerCheckpointRow
+{
+    public required string ExchangeId { get; set; }
+
+    public required string InstrumentId { get; set; }
+
+    public required string Timeframe { get; set; }
+
+    public DateTimeOffset OpenTimeUtc { get; set; }
+
+    public required string Consumer { get; set; }
+
+    public int State { get; set; }
+
+    public DateTimeOffset UpdatedAtUtc { get; set; }
 }
 
 public sealed class MarketTradeRow

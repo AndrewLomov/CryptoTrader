@@ -15,7 +15,10 @@ public sealed record Candle
         decimal low,
         decimal close,
         decimal volume,
-        bool isClosed)
+        bool isClosed,
+        VolumeUnit volumeUnit,
+        decimal? quoteVolume,
+        decimal? baseVolume)
     {
         Exchange = exchange;
         Instrument = instrument;
@@ -28,6 +31,9 @@ public sealed record Candle
         Close = close;
         Volume = volume;
         IsClosed = isClosed;
+        VolumeUnit = volumeUnit;
+        QuoteVolume = quoteVolume;
+        BaseVolume = baseVolume;
     }
 
     public ExchangeId Exchange { get; }
@@ -52,6 +58,12 @@ public sealed record Candle
 
     public bool IsClosed { get; }
 
+    public VolumeUnit VolumeUnit { get; }
+
+    public decimal? QuoteVolume { get; }
+
+    public decimal? BaseVolume { get; }
+
     public static Candle Create(
         ExchangeId exchange,
         InstrumentId instrument,
@@ -63,7 +75,10 @@ public sealed record Candle
         decimal low,
         decimal close,
         decimal volume,
-        bool isClosed)
+        bool isClosed,
+        VolumeUnit volumeUnit = VolumeUnit.BaseAsset,
+        decimal? quoteVolume = null,
+        decimal? baseVolume = null)
     {
         var canonical = Timeframe.Parse(timeframe.Code);
         if (canonical.Duration != timeframe.Duration)
@@ -83,6 +98,17 @@ public sealed record Candle
         EnsurePrice(low, nameof(low));
         EnsurePrice(close, nameof(close));
         Guard.NotNegative(volume, nameof(volume));
+        Guard.Defined(volumeUnit, nameof(volumeUnit));
+        if (quoteVolume is not null)
+        {
+            Guard.NotNegative(quoteVolume.Value, nameof(quoteVolume));
+        }
+
+        if (baseVolume is not null)
+        {
+            Guard.NotNegative(baseVolume.Value, nameof(baseVolume));
+        }
+
         if (high < open || high < close || high < low)
         {
             throw new DomainException("Candle high must be greater than or equal to open, close, and low.");
@@ -104,7 +130,10 @@ public sealed record Candle
             low,
             close,
             volume,
-            isClosed);
+            isClosed,
+            volumeUnit,
+            quoteVolume,
+            baseVolume);
     }
 
     public void EnsureClosed()

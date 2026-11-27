@@ -6,6 +6,32 @@
 
 Ключи Bybit в Compose и в образ не попадают. Версия 0.1 ходит только в публичные рыночные методы, а backtest умеет работать по импортированным свечам.
 
+## Состояние дерева
+
+Снимок ветки `feature/okx-multi-exchange`. Метки: Implemented, Partially Implemented, Not Implemented.
+
+| Область | Статус |
+|---|---|
+| Публичные рыночные данные Bybit | Implemented |
+| Публичный адаптер OKX | Implemented |
+| Live-торговля | Not Implemented |
+| Приватный OKX | Not Implemented |
+| `GET /health/live` | Implemented |
+| `GET /health/ready` | Implemented |
+| `GET /health/feeds` | Implemented |
+| `Persistence__ApplyMigrationsOnStartup` в Compose | Implemented |
+| Проверка `dotnet format` в CI | Partially Implemented |
+
+`src/CryptoTrader.Exchanges.Bybit` есть в решении. `Program.cs` регистрирует его через `AddBybit`. Публичный REST — `https://api.bybit.com`. Публичные WebSocket — spot `wss://stream.bybit.com/v5/public/spot` и linear `wss://stream.bybit.com/v5/public/linear`. Поля API-ключа в `BybitOptions` нет. `BybitTradingClient.SubmitAsync` возвращает `LiveTradingDisabled` без сетевого вызова.
+
+`src/CryptoTrader.Exchanges.Okx` подключён в `CryptoTrader.slnx` и в `Program.cs` через `AddOkx`. Публичный REST — `https://openapi.okx.com`. WebSocket — `wss://ws.okx.com/ws/v5/public` и свечи `wss://ws.okx.com/ws/v5/business`. Спецификация: [okx-api-reference-notes.md](okx-api-reference-notes.md). Публичная конфигурация обходится без API key, secret и passphrase.
+
+Compose передаёт в контейнер `environment` и перекрывает `env_file`. Среди этих переменных нет ключа OKX. Публичные `Okx__Enabled`, `Okx__RestBaseUrl`, `Okx__PublicWebSocketUrl` и `Okx__BusinessWebSocketUrl` можно задать без секретов; в Compose они не подставлены, поэтому контейнер берёт значения из `appsettings.json`.
+
+`Program.cs` сопоставляет `/health/live`, `/health/ready` и `/health/feeds`. Ready смотрит PostgreSQL (`DatabaseReadyProbe`) и биржу не опрашивает. Feeds показывает состояние подписок и биржу для ready не заменяет.
+
+Секреты остаются в `deploy/.env` на машине оператора. В git лежит `deploy/.env.example` с placeholder. Логи Host пишет `RedactingJsonFormatter`: свойства с key, secret, token, password или signature в имени отбрасываются.
+
 ## Требования
 
 - Docker Compose v2.
@@ -56,7 +82,7 @@ curl.exe http://127.0.0.1:8080/health/ready
 curl.exe http://127.0.0.1:8080/metrics
 ```
 
-`/health/live` и `/health/ready` анонимны. Ready проверяет PostgreSQL и не проверяет Bybit. `/metrics` остаётся на loopback вместе с портом 8080.
+`/health/live`, `/health/ready` и `/health/feeds` анонимны. Ready проверяет PostgreSQL и не проверяет биржу. `/metrics` остаётся на loopback вместе с портом 8080.
 
 Остановка без удаления данных:
 
@@ -82,7 +108,7 @@ docker compose --project-directory deploy -f deploy/docker-compose.yml --env-fil
 
 ## Миграции
 
-Отдельного контейнера migrate нет. `Persistence__ApplyMigrationsOnStartup=true` заставляет Host применить миграции EF Core на старте. К этому моменту `depends_on` уже дождался `pg_isready`.
+Отдельного контейнера migrate нет. В `appsettings.json` флаг `Persistence:ApplyMigrationsOnStartup` равен `false`. Compose задаёт `Persistence__ApplyMigrationsOnStartup=true`, и секция `environment` перекрывает `.env`. При `true` процесс применяет миграции EF Core дважды на одном старте: `Program.cs` до `app.Run` вызывает `CryptoTrader.Host.Persistence.DatabaseMigrator.ApplyAsync`, а `PersistenceMigrationHostedService` в `StartingAsync` вызывает `CryptoTrader.Infrastructure.Persistence.DatabaseMigrator.ApplyAsync` (`Database.MigrateAsync`). К первому вызову `depends_on` уже дождался `pg_isready`. Повторный вызов накатывает только миграции, которых ещё нет в `__EFMigrationsHistory`. Этот документ стек не запускает.
 
 Повторный старт применяет только ещё не применённые миграции. Схема не накатывается вручную скриптом.
 
@@ -182,11 +208,15 @@ curl.exe http://127.0.0.1:8080/api/v1/backtests/{runId} -H "X-Api-Key: replace-w
 
 ## CI
 
-Workflow `.github/workflows/ci.yml` запускается на `push` и `pull_request`, runner `ubuntu-latest`.
+Workflow `.github/workflows/ci.yml` запускается на `push` и `pull_request`, runner `ubuntu-latest`. Живых вызовов OKX workflow не добавляет.
 
 Job `build`: `actions/setup-dotnet` со SDK `10.0.x` и версией из `global.json`, затем `dotnet restore CryptoTrader.slnx`, `dotnet build CryptoTrader.slnx -c Release`, `dotnet test CryptoTrader.slnx -c Release --filter "Category!=Integration"`.
 
 Job `integration`: тот же SDK, проверка `docker version`, тесты `--filter "Category=Integration"`. Trait в тестах — `Category=Integration`. На `ubuntu-latest` Docker уже есть, отдельные Windows-раннеры не используются.
+
+Job `format`: Partially Implemented. Шаг `dotnet format CryptoTrader.slnx --verify-no-changes` стоит с `continue-on-error: true`. Локальный прогон 2026-11-27 завершился с кодом 2: в git-blob `src/CryptoTrader.Infrastructure/Persistence/Migrations/20261127085645_Initial.cs` есть UTF-8 BOM при переводах строк LF, редактор ждёт `charset=utf-8` без BOM. На Windows с `core.autocrlf=true` рабочая копия ещё и CRLF, поэтому локально добавляется `ENDOFLINE`. `Directory.Build.props` не менялся: `TreatWarningsAsErrors` остаётся `false`, `AnalysisLevel` остаётся `latest`.
+
+Дальше: убрать BOM у этой миграции, повторить `dotnet format CryptoTrader.slnx --verify-no-changes` на дереве с LF и кодом 0, затем снять `continue-on-error` и сделать шаг обязательным. Пока BOM на месте, обязательный шаг валит ветку на уже существующем расхождении.
 
 ## Чего в поставке нет
 

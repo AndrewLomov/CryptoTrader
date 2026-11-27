@@ -102,6 +102,16 @@ public sealed class PaperTradingCoordinator(
             return;
         }
 
+        if (instrument.Type != InstrumentType.Spot || candle.VolumeUnit != VolumeUnit.BaseAsset)
+        {
+            logger.LogInformation(
+                "Paper trading skipped for {InstrumentId}: type {InstrumentType}, volume unit {VolumeUnit}.",
+                instrument.Id.Value,
+                instrument.Type,
+                candle.VolumeUnit);
+            return;
+        }
+
         if (instrument.Exchange != ExchangeId.Bybit)
         {
             logger.LogWarning("Candle exchange {Exchange} is outside the paper BYBIT account.", instrument.Exchange.Value);

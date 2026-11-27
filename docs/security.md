@@ -2,6 +2,27 @@
 
 Контур 0.1 — локальный или один VPS. Реальные заявки не отправляются. `Execution:LiveTradingEnabled` должен оставаться `false`.
 
+## Состояние дерева
+
+Снимок ветки `feature/okx-multi-exchange`. Метки: Implemented, Partially Implemented, Not Implemented.
+
+| Область | Статус |
+|---|---|
+| Публичные рыночные данные Bybit | Implemented |
+| Публичный адаптер OKX | Implemented |
+| Live-торговля | Not Implemented |
+| Приватный OKX | Not Implemented |
+| Секреты вне git и логов | Implemented |
+| `GET /health/live` | Implemented, анонимный |
+| `GET /health/ready` | Implemented, анонимный, PostgreSQL |
+| `GET /health/feeds` | Implemented, анонимный |
+
+`BybitOptions` хранит публичный REST, публичные WebSocket, список символов, таймаут и лимит запросов. API-ключа биржи в этом типе нет. `BybitTradingClient.SubmitAsync` возвращает `LiveTradingDisabled` и сеть не открывает. Чтение приватного счёта Bybit и отмена заявки бросают `NotSupportedException`.
+
+Публичный OKX реализован в `src/CryptoTrader.Exchanges.Okx`. Приватный REST, приватный WebSocket, API key, secret и passphrase в этом проекте отсутствуют. `OkxTradingClient.SubmitAsync` возвращает `LiveTradingDisabled` без сети. `OkxAccountClient` бросает `NotSupportedException` и не возвращает фиктивный баланс. `deploy/.env.example` и `deploy/docker-compose.yml` ключей OKX не содержат. Публичные URL задаются в `appsettings.json`; Compose их не перекрывает секретами.
+
+`Program.cs` сопоставляет `/health/live`, `/health/ready` и `/health/feeds`. Ответы health и API секрет биржи не возвращают: секрета биржи в конфигурации нет.
+
 ## Секреты не попадают в git
 
 В репозитории нет пароля базы, административного ключа и ключей биржи. `deploy/.env.example` содержит только placeholder `cryptotrader` и строку `Api__AdminApiKey=replace-with-a-long-local-secret`.
@@ -12,15 +33,15 @@ Dockerfile не копирует `.env` в слои образа. В образ 
 
 Дампы `pg_dump` лежат вне дерева исходников. Их не коммитят: в базе есть paper-состояние, свечи и отчёты backtest.
 
-Пароль базы и `Api__AdminApiKey` не вставляют в issues, логи и скриншоты. Serilog маскирует поля, в имени которых есть key, secret, token, password или signature.
+Пароль базы и `Api__AdminApiKey` не вставляют в issues, логи и скриншоты. `RedactingJsonFormatter` отбрасывает свойства, в имени которых есть key, secret, token, password или signature. Имя `passphrase` само по себе в этот список не входит. Приватного OKX в дереве нет, и passphrase в конфигурацию не добавляют. Перед появлением приватного контура в проверку имени нужно включить `passphrase`.
 
 ## Ключ управляющего API
 
 Маршруты `/api/v1/*` требуют заголовок `X-Api-Key`. Host сравнивает его с `Api:AdminApiKey` и не пишет ключ в лог. Пустое значение останавливает запуск.
 
-`Api__AdminApiKey` — локальный секрет этого API. Это не ключ биржи Bybit. В запросах к Bybit он не используется. Отдельной пользовательской учётной записи в 0.1 нет.
+`Api__AdminApiKey` — локальный секрет этого API. Это не ключ биржи Bybit и не ключ OKX. В запросах к публичному Bybit он не используется. Отдельной пользовательской учётной записи в 0.1 нет.
 
-`GET /health/live` и `GET /health/ready` анонимны. Ready зависит от PostgreSQL. Ответы API не содержат секретов.
+`GET /health/live`, `GET /health/ready` и `GET /health/feeds` анонимны. Ready зависит от PostgreSQL. Ответы API не содержат секретов.
 
 Перед первым запуском placeholder в `.env` заменяют на длинную случайную строку. Ключ хранится в `.env` или в секрет-хранилище хоста, не в `appsettings.json`.
 
@@ -58,8 +79,8 @@ Paper и backtest этот запрет не обходят: paper не созд
 
 ## Вывод средств
 
-Приватная торговля в 0.1 не реализована. Подпись приватных методов Bybit отсутствует, ключ биржи в конфигурации не заводится. Право вывода средств (withdrawal) не запрашивается и не используется, потому что приватного торгового контура нет.
+Приватная торговля в 0.1 — Not Implemented. Подпись приватных методов Bybit отсутствует, ключ биржи в конфигурации не заводится. Приватный OKX — Not Implemented. Право вывода средств (withdrawal) не запрашивается и не используется, потому что приватного торгового контура нет.
 
-Публичные методы рыночных данных ключ не требуют. Импорт свечей и backtest выполняются без биржевого секрета.
+Публичные методы Bybit ключ не требуют. Публичная конфигурация OKX по контракту ветки тоже обходится без API key, secret и passphrase. Импорт свечей и backtest выполняются без биржевого секрета.
 
 Когда приватная торговля появится отдельным решением, ключ биржи по-прежнему не кладут в git, образ и логи, а разрешение withdrawal не добавляют.

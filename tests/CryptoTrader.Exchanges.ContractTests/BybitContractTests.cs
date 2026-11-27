@@ -70,11 +70,18 @@ public class BybitContractTests
             Timeout = TimeSpan.FromSeconds(2),
         };
         var client = CreateMarketDataClient(http);
+        var instrument = new InstrumentId("BYBIT-SPOT-BTCUSDT");
         var candles = await client.GetCandlesAsync(
-            new InstrumentId("BYBIT-SPOT-BTCUSDT"),
+            instrument,
             Timeframe.OneHour,
             expectedOpen,
-            expectedOpen.AddHours(2),
+            expectedOpen.AddHours(1),
+            CancellationToken.None);
+        var history = await client.GetCandleHistoryAsync(
+            instrument,
+            Timeframe.OneHour,
+            expectedOpen,
+            expectedOpen.AddHours(1),
             CancellationToken.None);
 
         handler.Calls.ShouldBeGreaterThan(0);
@@ -83,7 +90,38 @@ public class BybitContractTests
             request.RequestUri.ShouldNotBeNull();
             request.RequestUri!.Host.ShouldBe("127.0.0.1");
         }
+
+        history.Completeness.ShouldBe(CandleHistoryCompleteness.Complete);
+        AssertCandle(history.Candles, expectedOpen);
         AssertCandle(candles, expectedOpen);
+    }
+
+    [Fact]
+    public async Task Incomplete_kline_range_throws()
+    {
+        var expectedOpen = DateTimeOffset.FromUnixTimeMilliseconds(1_704_067_200_000);
+        var handler = new RecordingHandler(KlineJson);
+        using var http = new HttpClient(handler)
+        {
+            BaseAddress = new Uri("http://127.0.0.1:9/"),
+            Timeout = TimeSpan.FromSeconds(2),
+        };
+        var client = CreateMarketDataClient(http);
+
+        var error = await Should.ThrowAsync<IncompleteCandleHistoryException>(() => client.GetCandlesAsync(
+            new InstrumentId("BYBIT-SPOT-BTCUSDT"),
+            Timeframe.OneHour,
+            expectedOpen,
+            expectedOpen.AddHours(2),
+            CancellationToken.None));
+
+        error.Message.ShouldNotBeNullOrWhiteSpace();
+        handler.Calls.ShouldBeGreaterThan(0);
+        foreach (var request in handler.Requests)
+        {
+            request.RequestUri.ShouldNotBeNull();
+            request.RequestUri!.Host.ShouldBe("127.0.0.1");
+        }
     }
 
     private static void AssertCandle(IReadOnlyList<Candle> candles, DateTimeOffset expectedOpen)

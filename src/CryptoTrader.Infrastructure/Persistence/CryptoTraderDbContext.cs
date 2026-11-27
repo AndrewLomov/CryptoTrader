@@ -21,6 +21,8 @@ public sealed class CryptoTraderDbContext : DbContext
 
     public DbSet<CandleRow> Candles => Set<CandleRow>();
 
+    public DbSet<CandleConsumerCheckpointRow> CandleConsumerCheckpoints => Set<CandleConsumerCheckpointRow>();
+
     public DbSet<MarketTradeRow> MarketTrades => Set<MarketTradeRow>();
 
     public DbSet<FundingRateRow> FundingRates => Set<FundingRateRow>();
@@ -72,6 +74,7 @@ public sealed class CryptoTraderDbContext : DbContext
         modelBuilder.ApplyConfiguration(new InstrumentRowConfiguration());
         modelBuilder.ApplyConfiguration(new ApiCredentialsMetadataRowConfiguration());
         modelBuilder.ApplyConfiguration(new CandleRowConfiguration());
+        modelBuilder.ApplyConfiguration(new CandleConsumerCheckpointRowConfiguration());
         modelBuilder.ApplyConfiguration(new MarketTradeRowConfiguration());
         modelBuilder.ApplyConfiguration(new FundingRateRowConfiguration());
         modelBuilder.ApplyConfiguration(new OrderBookSnapshotRowConfiguration());

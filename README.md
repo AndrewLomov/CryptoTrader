@@ -4,6 +4,29 @@
 
 `Execution:LiveTradingEnabled` должен оставаться `false`. То же самое задано переменной `Execution__LiveTradingEnabled=false` в `deploy/docker-compose.yml`. Если флаг истинный, режим `Live`, `Risk:AllowFuturesLive` или `Risk:AllowCrossMargin`, процесс не стартует.
 
+## Состояние дерева
+
+Снимок ветки `feature/okx-multi-exchange`. Метки: Implemented, Partially Implemented, Not Implemented.
+
+| Область | Статус |
+|---|---|
+| Публичные рыночные данные Bybit | Implemented |
+| Публичный адаптер OKX | Implemented |
+| Live-торговля | Not Implemented |
+| Приватный OKX | Not Implemented |
+| `GET /health/live` | Implemented |
+| `GET /health/ready` | Implemented |
+| `GET /health/feeds` | Implemented |
+| Проверка `dotnet format` в CI | Partially Implemented |
+
+`src/CryptoTrader.Exchanges.Bybit` входит в `CryptoTrader.slnx`. `Program.cs` вызывает `AddBybit`. Секция `Bybit` в `appsettings.json` задаёт публичный REST `https://api.bybit.com` и публичные WebSocket spot и linear. В `BybitOptions` нет поля API-ключа. Публичный REST покрывает instruments, kline, tickers, order book и funding history. `BybitTradingClient.SubmitAsync` возвращает `LiveTradingDisabled` и сеть не открывает.
+
+`src/CryptoTrader.Exchanges.Okx` входит в решение. `Program.cs` вызывает `AddOkx` и собирает `IExchangeRegistry`. Публичный REST — `https://openapi.okx.com`. Публичный WebSocket — `wss://ws.okx.com/ws/v5/public`, свечи — `wss://ws.okx.com/ws/v5/business`. Секция `Okx` не содержит API key, secret и passphrase. `OkxTradingClient.SubmitAsync` возвращает `LiveTradingDisabled` и сеть не открывает. Подробности: [docs/okx-integration.md](docs/okx-integration.md) и [docs/okx-api-reference-notes.md](docs/okx-api-reference-notes.md).
+
+`Program.cs` сопоставляет анонимные `GET /health/live`, `GET /health/ready` и `GET /health/feeds`. Ready проверяет PostgreSQL. Feeds сообщает состояние подписок ingestion.
+
+Секреты остаются вне git и логов. `deploy/.env` игнорируется, в примере только placeholder. `RedactingJsonFormatter` отбрасывает свойства, в имени которых есть key, secret, token, password или signature.
+
 ## Требования
 
 - .NET SDK 10. В `global.json` указан SDK `10.0.403` с `rollForward: latestPatch` (тот же feature band).
@@ -17,7 +40,9 @@ dotnet build CryptoTrader.slnx -c Release
 dotnet test CryptoTrader.slnx -c Release --filter "Category!=Integration"
 ```
 
-Тесты с trait `Category=Integration` ждут Docker. На GitHub Actions их выполняет отдельная job на `ubuntu-latest`.
+Тесты с trait `Category=Integration` ждут Docker. На GitHub Actions их выполняет отдельная job на `ubuntu-latest`. Живых вызовов OKX в workflow нет.
+
+Проверка форматирования в CI — job `format` с `continue-on-error: true`. Локальный `dotnet format CryptoTrader.slnx --verify-no-changes` на 2026-11-27 завершился с кодом 2 из-за UTF-8 BOM в миграции `20261127085645_Initial.cs`. Шаг станет обязательным после того, как эта проверка на LF-дереве вернёт 0. `TreatWarningsAsErrors` остаётся `false`. `AnalysisLevel` уже `latest`.
 
 ## Запуск стека
 
@@ -33,7 +58,7 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Перед запуском замените `Api__AdminApiKey` в `deploy/.env`. Это локальный секрет заголовка `X-Api-Key`. Это не ключ биржи Bybit. Ключи Bybit в Compose не задаются.
+Перед запуском замените `Api__AdminApiKey` в `deploy/.env`. Это локальный секрет заголовка `X-Api-Key`. Это не ключ биржи. Ключи Bybit и OKX в Compose и в `.env.example` не задаются. Публичный Bybit и будущий публичный OKX API-ключ биржи не требуют.
 
 Образ собирается из корня репозитория (`deploy/Dockerfile`, SDK `mcr.microsoft.com/dotnet/sdk:10.0`). Файл `.env` в образ не копируется. Приложение слушает `http://+:8080` и публикуется только на `127.0.0.1:8080`. PostgreSQL 16 публикуется только на `127.0.0.1:5432`.
 
@@ -41,8 +66,9 @@ docker compose up --build
 
 ## Проверка
 
-- http://127.0.0.1:8080/health/live — процесс жив, без ключа API.
-- http://127.0.0.1:8080/health/ready — PostgreSQL доступен, без ключа API.
+- http://127.0.0.1:8080/health/live — Implemented, процесс жив, без ключа API.
+- http://127.0.0.1:8080/health/ready — Implemented, PostgreSQL доступен, без ключа API.
+- http://127.0.0.1:8080/health/feeds — Implemented, состояние подписок market data, без ключа API.
 - http://127.0.0.1:8080/metrics — Prometheus внутри хоста. Наружу порт не открывается.
 
 ```text

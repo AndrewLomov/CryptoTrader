@@ -64,3 +64,30 @@ jobs:
 
       - name: Test
         run: dotnet test CryptoTrader.slnx -c Release --filter "Category=Integration"
+
+  # Local baseline 2026-11-27: `dotnet format CryptoTrader.slnx --verify-no-changes` exited 2.
+  # The committed blob of src/CryptoTrader.Infrastructure/Persistence/Migrations/20261127085645_Initial.cs
+  # is LF with a UTF-8 BOM, so CI still reports CHARSET. The working tree on Windows also had CRLF
+  # (core.autocrlf=true), which added ENDOFLINE locally. This job stays non-blocking until that file
+  # is utf-8 without a BOM and verify exits 0 on an LF checkout. Then remove continue-on-error.
+  # Do not set TreatWarningsAsErrors=true. AnalysisLevel is already latest in Directory.Build.props.
+  format:
+    name: format (non-blocking)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+          global-json-file: global.json
+
+      - name: Restore
+        run: dotnet restore CryptoTrader.slnx
+
+      - name: Verify formatting
+        continue-on-error: true
+        run: dotnet format CryptoTrader.slnx --verify-no-changes

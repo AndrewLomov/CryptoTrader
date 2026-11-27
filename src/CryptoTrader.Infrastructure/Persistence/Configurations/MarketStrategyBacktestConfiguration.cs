@@ -21,10 +21,29 @@ internal sealed class CandleRowConfiguration : IEntityTypeConfiguration<CandleRo
         builder.Property(x => x.Low).HasColumnName("low");
         builder.Property(x => x.Close).HasColumnName("close");
         builder.Property(x => x.Volume).HasColumnName("volume");
+        builder.Property(x => x.VolumeUnit).HasColumnName("volume_unit").HasDefaultValue(1).IsRequired();
+        builder.Property(x => x.QuoteVolume).HasColumnName("quote_volume");
+        builder.Property(x => x.BaseVolume).HasColumnName("base_volume");
         builder.Property(x => x.IsClosed).HasColumnName("is_closed");
         builder.HasIndex(x => new { x.ExchangeId, x.InstrumentId, x.Timeframe, x.OpenTimeUtc })
             .IsUnique()
             .HasDatabaseName("ux_candles_identity");
+    }
+}
+
+internal sealed class CandleConsumerCheckpointRowConfiguration : IEntityTypeConfiguration<CandleConsumerCheckpointRow>
+{
+    public void Configure(EntityTypeBuilder<CandleConsumerCheckpointRow> builder)
+    {
+        builder.ToTable("candle_consumer_checkpoints");
+        builder.HasKey(x => new { x.ExchangeId, x.InstrumentId, x.Timeframe, x.OpenTimeUtc, x.Consumer });
+        builder.Property(x => x.ExchangeId).HasColumnName("exchange_id").IsRequired();
+        builder.Property(x => x.InstrumentId).HasColumnName("instrument_id").IsRequired();
+        builder.Property(x => x.Timeframe).HasColumnName("timeframe").HasMaxLength(16).IsRequired();
+        builder.Property(x => x.OpenTimeUtc).HasColumnName("open_time_utc");
+        builder.Property(x => x.Consumer).HasColumnName("consumer").IsRequired();
+        builder.Property(x => x.State).HasColumnName("state");
+        builder.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
     }
 }
 

@@ -11,8 +11,12 @@ namespace CryptoTrader.Host.Api;
 
 internal static class ContractMapper
 {
-    public static ExchangeListResponse Exchanges(TradingMode mode) =>
-        new([new ExchangeResponse(ExchangeId.Bybit.Value, null, mode.ToString())]);
+    public static ExchangeListResponse Exchanges(IEnumerable<string> exchangeCodes, TradingMode mode)
+    {
+        var tradingMode = mode.ToString();
+        var items = exchangeCodes.Select(code => new ExchangeResponse(code, null, tradingMode)).ToArray();
+        return new ExchangeListResponse(items);
+    }
 
     public static InstrumentResponse ToResponse(Instrument instrument) =>
         new(

@@ -1,6 +1,6 @@
 # Схема PostgreSQL — CryptoTrader 0.1
 
-Схема описана моделью EF Core `CryptoTrader.Infrastructure.Persistence.CryptoTraderDbContext`. Имена таблиц и колонок — snake_case. Миграция `Initial` лежит в `src/CryptoTrader.Infrastructure/Persistence/Migrations`.
+Схема описана моделью EF Core `CryptoTrader.Infrastructure.Persistence.CryptoTraderDbContext`. Имена таблиц и колонок — snake_case. Миграции `Initial` и `MultiExchangeMarketData` лежат в `src/CryptoTrader.Infrastructure/Persistence/Migrations`. Вторая только добавляет колонки и таблицу `candle_consumer_checkpoints`.
 
 Пароли, строки подключения и секреты биржи в этот документ не входят. Строка подключения приложения — `Persistence:ConnectionString`. Design-time фабрика читает переменную окружения `CRYPTO_TRADER_CONNECTION`.
 
@@ -31,6 +31,8 @@
 | `StrategyInstanceStatus` | Created = 1, Running = 2, Stopped = 3 |
 | `SignalAction` | EnterLong = 1, ExitLong = 2 |
 | `BacktestExitReason` | StopLoss = 1, TakeProfit = 2, TrendBreak = 3, EndOfData = 4 |
+| `VolumeUnit` | BaseAsset = 1, QuoteAsset = 2, Contract = 3 |
+| `CandleConsumerState` | Pending = 1, Processed = 2 |
 
 Live в 0.1 домен не создаёт. Колонка `orders.trading_mode` всё равно есть: Paper и Backtest пишутся в одну таблицу `orders`.
 
@@ -44,7 +46,7 @@ CREATE UNIQUE INDEX ux_orders_account_client_order_id
 ON orders (trading_account_id, client_order_id);
 ```
 
-Повторная загрузка свечи с тем же ключом не создаёт вторую строку. `ICandleRepository.UpsertRangeAsync` в одной транзакции находит существующие строки, обновляет `open`, `high`, `low`, `close`, а также `volume`, `close_time_utc` и `is_closed`, затем один раз вызывает `SaveChanges`. Объём и время закрытия обновляются вместе с OHLC, иначе у свечи остались бы старые объём и границы. Идентичность и суррогатный `id` не меняются.
+Повторная загрузка свечи с тем же ключом не создаёт вторую строку. Ключ включает `exchange_id`, поэтому свечи разных бирж не смешиваются. Индекс `ux_candles_identity` остаётся уникальным ключом `(exchange_id, instrument_id, timeframe, open_time_utc)`. `ICandleRepository.UpsertRangeAsync` в одной транзакции находит существующие строки и обновляет `open`, `high`, `low`, `close`, `volume`, `volume_unit`, `quote_volume`, `base_volume`, `close_time_utc` и `is_closed`, затем один раз вызывает `SaveChanges`. Объём, единица объёма и время закрытия обновляются вместе с OHLC. Идентичность и суррогатный `id` не меняются.
 
 Гонка двух вставок одного ключа упирается в `ux_candles_identity`. Повторный вызов после этого находит строку и обновляет её. Транзакция не держится вокруг HTTP.
 
@@ -62,6 +64,7 @@ ON orders (trading_account_id, client_order_id);
 | `pk_trade_signals` / `pk_risk_decisions` | `signal_id` |
 | `ux_backtest_trades_run_number` | `run_id`, `trade_number` |
 | `pk_paper_accounts` | `account_id` |
+| `pk_candle_consumer_checkpoints` | `exchange_id`, `instrument_id`, `timeframe`, `open_time_utc`, `consumer` |
 
 Индекс сигналов: `ix_trade_signals_strategy_instrument_time` по `(strategy_id, instrument_id, occurred_at_utc)`. У временных рядов `market_trades`, `funding_rates`, `order_book_snapshots` есть индекс по инструменту и времени. Диапазон свечей обслуживает `ux_candles_identity`.
 
@@ -77,13 +80,25 @@ ON orders (trading_account_id, client_order_id);
 
 ### instruments
 
-`id text` PK, `exchange_id`, `exchange_symbol`, `base_asset`, `quote_asset`, `instrument_type`, `price_tick`, `quantity_step`, `min_quantity`, `min_notional`, `contract_multiplier`, `is_trading_enabled`.
+`id text` PK, `exchange_id`, `exchange_symbol`, `base_asset`, `quote_asset`, `instrument_type`, `price_tick`, `quantity_step`, `min_quantity`, `min_notional`, `contract_multiplier`, `contract_value`, `contract_value_currency`, `settlement_currency`, `contract_kind`, `is_trading_enabled`.
+
+`contract_value` (`numeric`), `contract_value_currency`, `settlement_currency` и `contract_kind` допускают `null`. Уже сохранённые строки Bybit остаются с `null` в этих колонках и по-прежнему читаются. Отсутствующее контрактное значение не записывается как 1.
 
 Символ биржи не уникален: spot и linear могут называться одинаково. `FindByExchangeSymbolAsync` возвращает одну строку, сначала с меньшим `instrument_type`, затем по `id`. Индекс `ix_instruments_exchange_symbol` не уникальный.
 
 ### candles
 
-`id bigint` identity PK, `exchange_id`, `instrument_id`, `timeframe`, `open_time_utc`, `close_time_utc`, `open`, `high`, `low`, `close`, `volume`, `is_closed`. Уникальность — `ux_candles_identity`.
+`id bigint` identity PK, `exchange_id`, `instrument_id`, `timeframe`, `open_time_utc`, `close_time_utc`, `open`, `high`, `low`, `close`, `volume`, `volume_unit`, `quote_volume`, `base_volume`, `is_closed`. Уникальность — `ux_candles_identity` по `(exchange_id, instrument_id, timeframe, open_time_utc)`.
+
+`volume_unit integer not null default 1` — это `VolumeUnit.BaseAsset`. Существующие свечи получают 1. `quote_volume` и `base_volume` — nullable `numeric`. Пустой дополнительный объём остаётся `null` и не копируется из `volume`.
+
+### candle_consumer_checkpoints
+
+Первичный ключ `(exchange_id, instrument_id, timeframe, open_time_utc, consumer)`. Ещё две колонки: `state integer` (`CandleConsumerState`, Pending = 1, Processed = 2) и `updated_at_utc`.
+
+Строку пишет только `MarkPendingAsync` или `MarkProcessedAsync` для переданной свечи и потребителя. Исторические свечи сами в Pending не ставятся. `ListPendingCandlesAsync` соединяет чекпоинт со `candles` по бирже, инструменту, таймфрейму и времени открытия, отдаёт доменные свечи со `state = Pending`, по возрастанию `open_time_utc`, не больше `limit`.
+
+Внешнего ключа на `candles` нет. Удаление чекпоинта не удаляет свечу, каскада на свечи нет. Соединение включает `exchange_id`, биржи не смешиваются.
 
 ### orders
 
@@ -178,6 +193,8 @@ PK и FK `run_id` → `backtest_runs`. Колонки метрик отчёта:
 
 `DatabaseMigrator.ApplyAsync` вызывает `MigrateAsync`. Репозитории миграцию не запускают.
 
+`MultiExchangeMarketData` добавляет колонки `instruments` и `candles` и таблицу `candle_consumer_checkpoints`. Колонки не удаляются, миграция `Initial` не переписывается. Уже загруженные свечи и инструменты остаются на месте: `volume_unit` у старых свечей становится 1, контрактные поля старых инструментов остаются `null`.
+
 `Persistence:ApplyMigrationsOnStartup=true` включает hosted service. Он применяет миграции в `StartingAsync`, пишет в лог и пробрасывает исключение дальше, без строки подключения в сообщении. При `false` сервис ничего не делает.
 
 Проверка готовности — health check с именем `database` (`AddDbContextCheck<CryptoTraderDbContext>`).
@@ -187,3 +204,5 @@ PK и FK `run_id` → `backtest_runs`. Колонки метрик отчёта:
 ## Резервное копирование
 
 Порядок, расписание и проверка восстановления принадлежат DevOps. Короткая отсылка: [deploy/postgres/backup.md](../deploy/postgres/backup.md).
+
+Этот порядок не меняется. Полная копия базы забирает новые колонки и `candle_consumer_checkpoints` вместе с остальными данными. Отдельный сценарий резервного копирования не нужен, документ `deploy/postgres/backup.md` остаётся в силе. Миграция данные не уничтожает.

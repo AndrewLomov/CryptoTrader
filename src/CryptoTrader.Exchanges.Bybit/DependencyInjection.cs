@@ -1,8 +1,5 @@
 using System.Net.Http;
 using CryptoTrader.Exchanges.Abstractions;
-using CryptoTrader.Exchanges.Abstractions.Accounts;
-using CryptoTrader.Exchanges.Abstractions.MarketData;
-using CryptoTrader.Exchanges.Abstractions.Trading;
 using CryptoTrader.Exchanges.Bybit.Accounts;
 using CryptoTrader.Exchanges.Bybit.MarketData;
 using CryptoTrader.Exchanges.Bybit.Rest;
@@ -38,6 +35,11 @@ public static class BybitServiceCollectionExtensions
             client.Timeout = TimeSpan.FromSeconds(options.TimeoutSeconds);
         });
 
+        if (!IsEnabled(configuration, BybitOptions.SectionName, defaultValue: true))
+        {
+            return services;
+        }
+
         services.AddSingleton<BybitRateGate>();
         services.AddSingleton<BybitPublicRest>();
         services.AddSingleton(provider => new BybitMarketDataClient(
@@ -54,11 +56,22 @@ public static class BybitServiceCollectionExtensions
         services.AddSingleton<BybitInstrumentMetadataClient>();
         services.AddSingleton<BybitExchangeAdapter>();
         services.AddSingleton<IExchangeAdapter>(provider => provider.GetRequiredService<BybitExchangeAdapter>());
-        services.AddSingleton<IMarketDataClient>(provider => provider.GetRequiredService<BybitExchangeAdapter>().MarketData);
-        services.AddSingleton<ITradingClient>(provider => provider.GetRequiredService<BybitExchangeAdapter>().Trading);
-        services.AddSingleton<IAccountClient>(provider => provider.GetRequiredService<BybitExchangeAdapter>().Account);
-        services.AddSingleton<IInstrumentMetadataClient>(provider => provider.GetRequiredService<BybitExchangeAdapter>().Instruments);
-        services.AddSingleton<IFundingRateClient>(provider => provider.GetRequiredService<BybitExchangeAdapter>().Funding);
         return services;
+    }
+
+    private static bool IsEnabled(IConfiguration configuration, string sectionName, bool defaultValue)
+    {
+        var text = configuration.GetSection(sectionName)["Enabled"];
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return defaultValue;
+        }
+
+        if (bool.TryParse(text, out var enabled))
+        {
+            return enabled;
+        }
+
+        throw new InvalidOperationException($"{sectionName}:Enabled must be true or false.");
     }
 }

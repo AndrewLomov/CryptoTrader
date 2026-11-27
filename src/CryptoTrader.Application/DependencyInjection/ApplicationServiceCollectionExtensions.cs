@@ -26,7 +26,8 @@ public static class ApplicationServiceCollectionExtensions
         var api = ApplicationOptionsReader.ReadApi(configuration);
         var bybit = ApplicationOptionsReader.ReadBybit(configuration);
         var observability = ApplicationOptionsReader.ReadObservability(configuration);
-        StartupConfigurationValidator.Validate(execution, risk, marketData, persistence, api, bybit, observability);
+        var okx = ApplicationOptionsReader.ReadOkx(configuration);
+        StartupConfigurationValidator.Validate(execution, risk, marketData, persistence, api, bybit, observability, okx);
 
         services.AddSingleton<IOptions<ExecutionOptions>>(Options.Create(execution));
         services.AddSingleton<IOptions<RiskOptions>>(Options.Create(risk));
@@ -34,6 +35,7 @@ public static class ApplicationServiceCollectionExtensions
         services.AddSingleton<IOptions<PersistenceOptions>>(Options.Create(persistence));
         services.AddSingleton<IOptions<ApiOptions>>(Options.Create(api));
         services.AddSingleton<IOptions<BybitOptions>>(Options.Create(bybit));
+        services.AddSingleton<IOptions<OkxOptions>>(Options.Create(okx));
         services.AddSingleton<IOptions<ObservabilityOptions>>(Options.Create(observability));
         services.AddSingleton(TimeProvider.System);
         services.AddSingleton<TradingMetrics>();

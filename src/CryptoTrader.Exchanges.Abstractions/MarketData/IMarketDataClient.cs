@@ -17,6 +17,28 @@ public interface IMarketDataClient
         DateTimeOffset toUtc,
         CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Closed candles for the range, plus whether the adapter proved the range was complete.
+    /// The default calls <see cref="GetCandlesAsync"/> and does not prove completeness.
+    /// </summary>
+    async Task<CandleHistory> GetCandleHistoryAsync(
+        InstrumentId instrument,
+        Timeframe timeframe,
+        DateTimeOffset fromUtc,
+        DateTimeOffset toUtc,
+        CancellationToken cancellationToken)
+    {
+        var candles = await GetCandlesAsync(instrument, timeframe, fromUtc, toUtc, cancellationToken);
+        ArgumentNullException.ThrowIfNull(candles);
+        var completeness = candles.Count == 0
+            ? CandleHistoryCompleteness.Empty
+            : CandleHistoryCompleteness.Unverified;
+        return new CandleHistory(
+            candles,
+            completeness,
+            "Adapter did not report whether the requested range was complete.");
+    }
+
     Task<Ticker?> GetTickerAsync(
         InstrumentId instrument,
         CancellationToken cancellationToken);

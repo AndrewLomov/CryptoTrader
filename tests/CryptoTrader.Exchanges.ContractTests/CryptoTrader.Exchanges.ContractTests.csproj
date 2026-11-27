@@ -15,9 +15,19 @@
     </PackageReference>
     <PackageReference Include="Shouldly" />
     <PackageReference Include="NSubstitute" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\CryptoTrader.Exchanges.Bybit\CryptoTrader.Exchanges.Bybit.csproj" />
     <ProjectReference Include="..\..\src\CryptoTrader.Exchanges.Abstractions\CryptoTrader.Exchanges.Abstractions.csproj" />
+    <ProjectReference
+      Include="..\..\src\CryptoTrader.Exchanges.Okx\CryptoTrader.Exchanges.Okx.csproj"
+      Condition="Exists('..\..\src\CryptoTrader.Exchanges.Okx\CryptoTrader.Exchanges.Okx.csproj')" />
+  </ItemGroup>
+  <ItemGroup Condition="!Exists('..\..\src\CryptoTrader.Exchanges.Okx\CryptoTrader.Exchanges.Okx.csproj')">
+    <Compile Remove="OkxContractTests.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="Fixtures\Okx\**\*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

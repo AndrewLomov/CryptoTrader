@@ -1,3 +1,4 @@
+using CryptoTrader.Domain.Common;
 using CryptoTrader.Exchanges.Abstractions.Accounts;
 using CryptoTrader.Exchanges.Abstractions.MarketData;
 using CryptoTrader.Exchanges.Abstractions.Models;
@@ -18,4 +19,10 @@ public interface IExchangeAdapter
     IInstrumentMetadataClient Instruments { get; }
 
     ExchangeCapabilities Capabilities { get; }
+
+    ExchangeId ExchangeId => new(ExchangeCode);
+
+    IOrderBookClient? OrderBook => null;
+
+    IFundingRateClient? FundingRates => null;
 }

@@ -15,7 +15,10 @@ namespace CryptoTrader.Exchanges.Bybit.MarketData;
 
 public sealed class BybitMarketDataClient : IMarketDataClient
 {
-    public const int MaxKlinePages = 20;
+    /// <summary>
+    /// Safety cap for kline pagination. Reaching it is an incomplete history, not a successful range.
+    /// </summary>
+    public const int MaxKlinePages = 500;
 
     private readonly BybitPublicRest _rest;
     private readonly IOptions<BybitOptions> _options;
@@ -45,18 +48,36 @@ public sealed class BybitMarketDataClient : IMarketDataClient
         DateTimeOffset toUtc,
         CancellationToken cancellationToken)
     {
+        var history = await GetCandleHistoryAsync(instrument, timeframe, fromUtc, toUtc, cancellationToken);
+        if (history.Completeness is CandleHistoryCompleteness.Complete or CandleHistoryCompleteness.Empty)
+        {
+            return history.Candles;
+        }
+
+        throw new IncompleteCandleHistoryException(
+            history.Reason ?? "Bybit candle history is incomplete.");
+    }
+
+    public async Task<CandleHistory> GetCandleHistoryAsync(
+        InstrumentId instrument,
+        Timeframe timeframe,
+        DateTimeOffset fromUtc,
+        DateTimeOffset toUtc,
+        CancellationToken cancellationToken)
+    {
         var market = BybitSymbol.Require(instrument);
         var interval = BybitIntervals.ToExchange(timeframe);
         fromUtc = fromUtc.ToUniversalTime();
         toUtc = toUtc.ToUniversalTime();
         if (fromUtc > toUtc)
         {
-            return [];
+            return new CandleHistory([], CandleHistoryCompleteness.Empty, null);
         }
 
         var candles = new Dictionary<long, Candle>();
         var cursor = fromUtc;
-        for (var page = 0; page < MaxKlinePages && cursor <= toUtc; page++)
+        string? incompleteReason = null;
+        for (var page = 0; page < MaxKlinePages && cursor < toUtc; page++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             var windowEnd = WindowEnd(cursor, toUtc, timeframe);
@@ -104,17 +125,77 @@ public sealed class BybitMarketDataClient : IMarketDataClient
             var next = DateTimeOffset.FromUnixTimeMilliseconds(newest) + timeframe.Duration;
             if (next <= cursor)
             {
+                if (AnotherClosedCandleFits(cursor, toUtc, timeframe))
+                {
+                    incompleteReason = "Bybit kline cursor did not advance before the requested range ended.";
+                }
+
                 break;
             }
 
             cursor = next;
-            if (page == MaxKlinePages - 1 && cursor <= toUtc)
+            if (page == MaxKlinePages - 1
+                && cursor < toUtc
+                && AnotherClosedCandleFits(cursor, toUtc, timeframe))
             {
-                _logger.LogWarning("Bybit kline page cap of {PageCap} was reached before the requested range ended.", MaxKlinePages);
+                incompleteReason = $"Bybit kline page cap of {MaxKlinePages} was reached before the requested range ended.";
             }
         }
 
-        return candles.Values.OrderBy(candle => candle.OpenTimeUtc).ToArray();
+        var ordered = candles.Values.OrderBy(candle => candle.OpenTimeUtc).ToArray();
+        if (incompleteReason is not null)
+        {
+            _logger.LogWarning("Bybit candle history is incomplete: {Reason}", incompleteReason);
+            return new CandleHistory(ordered, CandleHistoryCompleteness.Incomplete, incompleteReason);
+        }
+
+        if (ordered.Length == 0)
+        {
+            return new CandleHistory([], CandleHistoryCompleteness.Empty, "No closed candles in the requested range.");
+        }
+
+        var gap = GapReason(ordered, fromUtc, toUtc, timeframe);
+        if (gap is not null)
+        {
+            _logger.LogWarning("Bybit candle history is incomplete: {Reason}", gap);
+            return new CandleHistory(ordered, CandleHistoryCompleteness.Incomplete, gap);
+        }
+
+        return new CandleHistory(ordered, CandleHistoryCompleteness.Complete, null);
+    }
+
+    private static string? GapReason(
+        IReadOnlyList<Candle> candles,
+        DateTimeOffset fromUtc,
+        DateTimeOffset toUtc,
+        Timeframe timeframe)
+    {
+        var missing = CandleGapDetector.FindMissingOpenTimes(candles);
+        if (missing.Count > 0)
+        {
+            return $"Bybit candle history is missing {missing.Count} confirmed candles.";
+        }
+
+        var first = candles[0];
+        var last = candles[^1];
+        if (first.OpenTimeUtc - timeframe.Duration >= fromUtc)
+        {
+            return "Bybit candle history is missing confirmed candles before the first returned open.";
+        }
+
+        try
+        {
+            if (last.CloseTimeUtc + timeframe.Duration <= toUtc)
+            {
+                return "Bybit candle history is missing confirmed candles after the last returned close.";
+            }
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return "Bybit candle history could not prove the range was covered.";
+        }
+
+        return null;
     }
 
     public async Task<Ticker?> GetTickerAsync(InstrumentId instrument, CancellationToken cancellationToken)
@@ -181,9 +262,16 @@ public sealed class BybitMarketDataClient : IMarketDataClient
             throw new InvalidOperationException("Bybit public websocket URL must be an absolute wss URL.");
         }
 
+        var capacity = options.ChannelCapacity;
+        if (capacity <= 0)
+        {
+            throw new InvalidOperationException("Bybit:ChannelCapacity must be positive.");
+        }
+
         var stream = new BybitPublicStream(
             _logger,
             _time,
+            capacity,
             cancellation => GetOrderBookAsync(subscription.Instrument, cancellation));
         await foreach (var marketEvent in stream.ReadAsync(
             subscription,
@@ -278,6 +366,18 @@ public sealed class BybitMarketDataClient : IMarketDataClient
         }
 
         return topics;
+    }
+
+    private static bool AnotherClosedCandleFits(DateTimeOffset cursor, DateTimeOffset toUtc, Timeframe timeframe)
+    {
+        try
+        {
+            return cursor + timeframe.Duration <= toUtc;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return false;
+        }
     }
 
     private static DateTimeOffset WindowEnd(DateTimeOffset cursor, DateTimeOffset toUtc, Timeframe timeframe)

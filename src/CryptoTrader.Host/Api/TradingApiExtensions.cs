@@ -6,6 +6,7 @@ using CryptoTrader.Application.Backtesting;
 using CryptoTrader.Contracts.Requests;
 using CryptoTrader.Contracts.Responses;
 using CryptoTrader.Domain.Trading;
+using CryptoTrader.Exchanges.Abstractions;
 using Microsoft.Extensions.Options;
 
 namespace CryptoTrader.Host.Api;
@@ -17,8 +18,14 @@ internal static class TradingApiExtensions
         ArgumentNullException.ThrowIfNull(app);
         var api = app.MapGroup("/api/v1");
 
-        api.MapGet("/exchanges", (IOptions<ExecutionOptions> execution) =>
-            Results.Ok(ContractMapper.Exchanges(execution.Value.Mode)));
+        api.MapGet("/exchanges", (IExchangeRegistry registry, IOptions<ExecutionOptions> execution) =>
+        {
+            var codes = registry.GetAll()
+                .Select(adapter => adapter.ExchangeCode)
+                .OrderBy(code => code, StringComparer.Ordinal)
+                .ToArray();
+            return Results.Ok(ContractMapper.Exchanges(codes, execution.Value.Mode));
+        });
 
         api.MapGet("/instruments", async (
             CandleAdminService candles,

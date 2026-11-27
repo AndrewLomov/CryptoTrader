@@ -302,6 +302,42 @@ namespace CryptoTrader.Infrastructure.Persistence.Migrations
                     b.ToTable("balances_snapshots", (string)null);
                 });
 
+            modelBuilder.Entity("CryptoTrader.Infrastructure.Persistence.Entities.CandleConsumerCheckpointRow", b =>
+                {
+                    b.Property<string>("ExchangeId")
+                        .HasColumnType("text")
+                        .HasColumnName("exchange_id");
+
+                    b.Property<string>("InstrumentId")
+                        .HasColumnType("text")
+                        .HasColumnName("instrument_id");
+
+                    b.Property<string>("Timeframe")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
+                        .HasColumnName("timeframe");
+
+                    b.Property<DateTimeOffset>("OpenTimeUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("open_time_utc");
+
+                    b.Property<string>("Consumer")
+                        .HasColumnType("text")
+                        .HasColumnName("consumer");
+
+                    b.Property<int>("State")
+                        .HasColumnType("integer")
+                        .HasColumnName("state");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.HasKey("ExchangeId", "InstrumentId", "Timeframe", "OpenTimeUtc", "Consumer");
+
+                    b.ToTable("candle_consumer_checkpoints", (string)null);
+                });
+
             modelBuilder.Entity("CryptoTrader.Infrastructure.Persistence.Entities.CandleRow", b =>
                 {
                     b.Property<long>("Id")
@@ -310,6 +346,10 @@ namespace CryptoTrader.Infrastructure.Persistence.Migrations
                         .HasColumnName("id");
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityAlwaysColumn(b.Property<long>("Id"));
+
+                    b.Property<decimal?>("BaseVolume")
+                        .HasColumnType("numeric")
+                        .HasColumnName("base_volume");
 
                     b.Property<decimal>("Close")
                         .HasColumnType("numeric")
@@ -349,6 +389,10 @@ namespace CryptoTrader.Infrastructure.Persistence.Migrations
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("open_time_utc");
 
+                    b.Property<decimal?>("QuoteVolume")
+                        .HasColumnType("numeric")
+                        .HasColumnName("quote_volume");
+
                     b.Property<string>("Timeframe")
                         .IsRequired()
                         .HasMaxLength(16)
@@ -358,6 +402,12 @@ namespace CryptoTrader.Infrastructure.Persistence.Migrations
                     b.Property<decimal>("Volume")
                         .HasColumnType("numeric")
                         .HasColumnName("volume");
+
+                    b.Property<int>("VolumeUnit")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(1)
+                        .HasColumnName("volume_unit");
 
                     b.HasKey("Id");
 
@@ -510,9 +560,21 @@ namespace CryptoTrader.Infrastructure.Persistence.Migrations
                         .HasColumnType("text")
                         .HasColumnName("base_asset");
 
+                    b.Property<string>("ContractKind")
+                        .HasColumnType("text")
+                        .HasColumnName("contract_kind");
+
                     b.Property<decimal?>("ContractMultiplier")
                         .HasColumnType("numeric")
                         .HasColumnName("contract_multiplier");
+
+                    b.Property<decimal?>("ContractValue")
+                        .HasColumnType("numeric")
+                        .HasColumnName("contract_value");
+
+                    b.Property<string>("ContractValueCurrency")
+                        .HasColumnType("text")
+                        .HasColumnName("contract_value_currency");
 
                     b.Property<string>("ExchangeId")
                         .IsRequired()
@@ -552,6 +614,10 @@ namespace CryptoTrader.Infrastructure.Persistence.Migrations
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("quote_asset");
+
+                    b.Property<string>("SettlementCurrency")
+                        .HasColumnType("text")
+                        .HasColumnName("settlement_currency");
 
                     b.HasKey("Id");
 
