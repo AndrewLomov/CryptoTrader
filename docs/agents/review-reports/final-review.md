@@ -37,4 +37,7 @@
 | `dotnet test CryptoTrader.slnx -c Release --filter Category=Integration` | 5 passed, 0 failed. PostgreSQL 16 через Testcontainers |
 | `dotnet format CryptoTrader.slnx --verify-no-changes` | код 0 |
 
-Удалённый прогон GitHub Actions по финальному коммиту в этот отчёт не вписан, пока workflow не наблюдался.
+Удалённый прогон GitHub Actions для `b198d9b` наблюдался зелёным. Оба запуска завершились `success`: job `format`, `build and unit tests` и `integration tests`.
+
+- https://github.com/AndrewLomov/CryptoTrader/actions/runs/46001631680
+- https://github.com/AndrewLomov/CryptoTrader/actions/runs/46001813729
