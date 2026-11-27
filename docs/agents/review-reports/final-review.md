@@ -41,3 +41,13 @@
 
 - https://github.com/AndrewLomov/CryptoTrader/actions/runs/46001631680
 - https://github.com/AndrewLomov/CryptoTrader/actions/runs/46001813729
+
+## 27 ноября 2026, повторное ревью
+
+Два замечания до слияния закрыты в этом проходе.
+
+Глобальный emergency stop хранится в `paper_trading_control`. Вызов без биржи и котировки больше не создаёт счёт BYBIT/USDT. Новый ledger получает стоп, пока флаг включён. Снятие — `POST /api/v1/risk/emergency-stop/release`. Пока стоп включён, свеча остаётся Pending и не меняет книгу.
+
+Закрытая свеча и checkpoint Pending пишутся одной транзакцией. Сбой до commit откатывает обе записи. Повтор Pending идёт периодически в том же процессе. Время закрытия дальше чем на 5 секунд в будущем не идёт в paper. Рост `applied_candle_keys` записан в `docs/backlog.md` и в этот проход таблицу ключей не переносит.
+
+Локально после этих правок: `Category!=Integration` 108 passed, `Category=Integration` 7 passed, `dotnet format --verify-no-changes` код 0. Удалённый прогон этого коммита в текст выше не входит.

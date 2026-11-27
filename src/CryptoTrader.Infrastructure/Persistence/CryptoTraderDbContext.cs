@@ -61,6 +61,8 @@ public sealed class CryptoTraderDbContext : DbContext
 
     public DbSet<PaperAccountRow> PaperAccounts => Set<PaperAccountRow>();
 
+    public DbSet<PaperTradingControlRow> PaperTradingControls => Set<PaperTradingControlRow>();
+
     protected override void ConfigureConventions(ModelConfigurationBuilder configurationBuilder)
     {
         configurationBuilder.Properties<decimal>().HaveColumnType("numeric");
@@ -94,5 +96,6 @@ public sealed class CryptoTraderDbContext : DbContext
         modelBuilder.ApplyConfiguration(new BacktestMetricsRowConfiguration());
         modelBuilder.ApplyConfiguration(new BacktestTradeRowConfiguration());
         modelBuilder.ApplyConfiguration(new PaperAccountRowConfiguration());
+        modelBuilder.ApplyConfiguration(new PaperTradingControlRowConfiguration());
     }
 }

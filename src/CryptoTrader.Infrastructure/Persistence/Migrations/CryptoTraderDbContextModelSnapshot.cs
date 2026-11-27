@@ -911,6 +911,30 @@ namespace CryptoTrader.Infrastructure.Persistence.Migrations
                     b.ToTable("paper_accounts", (string)null);
                 });
 
+            modelBuilder.Entity("CryptoTrader.Infrastructure.Persistence.Entities.PaperTradingControlRow", b =>
+                {
+                    b.Property<int>("Id")
+                        .HasColumnType("integer")
+                        .HasColumnName("id");
+
+                    b.Property<bool>("EmergencyStop")
+                        .HasColumnType("boolean")
+                        .HasColumnName("emergency_stop");
+
+                    b.Property<string>("Reason")
+                        .HasMaxLength(512)
+                        .HasColumnType("character varying(512)")
+                        .HasColumnName("reason");
+
+                    b.Property<DateTimeOffset>("UpdatedAtUtc")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("updated_at_utc");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("paper_trading_control", (string)null);
+                });
+
             modelBuilder.Entity("CryptoTrader.Infrastructure.Persistence.Entities.PositionRow", b =>
                 {
                     b.Property<Guid>("TradingAccountId")

@@ -7,6 +7,7 @@ using CryptoTrader.Domain.Instruments;
 using CryptoTrader.Domain.MarketData;
 using CryptoTrader.Domain.Trading;
 using CryptoTrader.Infrastructure.Persistence;
+using CryptoTrader.Infrastructure.Persistence.Repositories;
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
@@ -176,6 +177,57 @@ public sealed class DatabaseTests
         candle.Close.ShouldBe(105m);
         candle.VolumeUnit.ShouldBe(VolumeUnit.BaseAsset);
         candle.Exchange.ShouldBe(ExchangeId.Bybit);
+    }
+
+    [Fact]
+    public async Task Candle_and_checkpoint_roll_back_together_when_commit_does_not_happen()
+    {
+        var connectionString = await CreateDatabaseAsync();
+        var open = new DateTimeOffset(2026, 6, 2, 0, 0, 0, TimeSpan.Zero);
+        var candle = Hour(ExchangeId.Bybit, "BYBIT-SPOT-BTCUSDT", open, 100m);
+        await using (var context = CreateContext(connectionString))
+        {
+            await context.Database.MigrateAsync();
+            var intake = new CandleIntake(context, new CandleRepository(context), new CandleConsumerCheckpoint(context))
+            {
+                CrashBeforeCommit = true,
+            };
+
+            var failure = await Should.ThrowAsync<InvalidOperationException>(() =>
+                intake.PersistPendingAsync(candle, ICandleConsumerCheckpoint.PaperConsumer, open.AddHours(1), CancellationToken.None));
+            failure.Message.ShouldBe(CandleIntake.CrashBeforeCommitMessage);
+        }
+
+        await using (var verify = CreateContext(connectionString))
+        {
+            (await verify.Candles.CountAsync()).ShouldBe(0);
+            (await verify.CandleConsumerCheckpoints.CountAsync()).ShouldBe(0);
+        }
+
+        await using var recovered = CreateContext(connectionString);
+        var stored = new CandleIntake(recovered, new CandleRepository(recovered), new CandleConsumerCheckpoint(recovered));
+        (await stored.PersistPendingAsync(candle, ICandleConsumerCheckpoint.PaperConsumer, open.AddHours(1), CancellationToken.None)).ShouldBeTrue();
+        var pending = await new CandleConsumerCheckpoint(recovered).ListPendingCandlesAsync(ICandleConsumerCheckpoint.PaperConsumer, 10, CancellationToken.None);
+        pending.ShouldHaveSingleItem().Close.ShouldBe(100m);
+    }
+
+    [Fact]
+    public async Task Global_emergency_stop_is_stored_without_a_paper_account()
+    {
+        await using var context = await MigratedContextAsync();
+        (await TableExistsAsync(context, "paper_trading_control")).ShouldBeTrue();
+        var control = new PaperTradingControlRepository(context);
+        (await control.GetAsync(CancellationToken.None)).EmergencyStop.ShouldBeFalse();
+
+        await control.EngageAsync("halt", new DateTimeOffset(2026, 6, 2, 0, 0, 0, TimeSpan.Zero), CancellationToken.None);
+
+        var engaged = await control.GetAsync(CancellationToken.None);
+        engaged.EmergencyStop.ShouldBeTrue();
+        engaged.Reason.ShouldBe("halt");
+        (await context.PaperAccounts.CountAsync()).ShouldBe(0);
+
+        await control.ReleaseAsync(new DateTimeOffset(2026, 6, 2, 1, 0, 0, TimeSpan.Zero), CancellationToken.None);
+        (await control.GetAsync(CancellationToken.None)).EmergencyStop.ShouldBeFalse();
     }
 
     private async Task<CryptoTraderDbContext> MigratedContextAsync()

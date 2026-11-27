@@ -197,6 +197,8 @@ PK и FK `run_id` → `backtest_runs`. Колонки метрик отчёта:
 
 `20261127123818_IsolatePaperAccounts` добавляет `paper_accounts.applied_candle_keys`, `candle_consumer_checkpoints.skip_reason` и уникальный индекс `(exchange_id, quote_asset)`. Строки не удаляются. Обновление с `Initial` сохраняет уже записанные свечи Bybit.
 
+`20261127132828_GlobalPaperTradingControl` добавляет таблицу `paper_trading_control`: одна строка `id = 1`, колонки `emergency_stop`, `reason varchar(512)`, `updated_at_utc`. Это глобальный аварийный стоп paper. Он не создаёт счёт. Закрытая свеча и её checkpoint `Pending` коммитятся одной транзакцией. Массив `applied_candle_keys` остаётся в строке счёта до отдельной таблицы ключей, см. `docs/backlog.md`.
+
 `Persistence:ApplyMigrationsOnStartup=true` включает hosted service. Он применяет миграции в `StartingAsync`, пишет в лог и пробрасывает исключение дальше, без строки подключения в сообщении. При `false` сервис ничего не делает.
 
 Проверка готовности — health check с именем `database` (`AddDbContextCheck<CryptoTraderDbContext>`).

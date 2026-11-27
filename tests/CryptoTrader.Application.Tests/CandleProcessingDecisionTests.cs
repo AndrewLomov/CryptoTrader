@@ -57,4 +57,49 @@ public sealed class CandleProcessingDecisionTests
         decision.CanUpdatePaper.ShouldBeFalse();
         decision.Admission.ShouldBe(CandleAdmission.NotClosed);
     }
+
+    [Fact]
+    public void Close_inside_the_clock_skew_can_update_paper()
+    {
+        var decision = CandleProcessingDecision.Evaluate(
+            true,
+            Now + CandleProcessingDecision.FutureClockSkew,
+            Now,
+            Now,
+            Window);
+
+        decision.CanUpdatePaper.ShouldBeTrue();
+        decision.Admission.ShouldBe(CandleAdmission.Eligible);
+    }
+
+    [Fact]
+    public void Close_beyond_the_clock_skew_is_stored_and_not_tradable()
+    {
+        var decision = CandleProcessingDecision.Evaluate(
+            true,
+            Now + CandleProcessingDecision.FutureClockSkew + TimeSpan.FromTicks(1),
+            Now,
+            Now,
+            Window);
+
+        decision.CanPersistHistory.ShouldBeTrue();
+        decision.CanUpdatePaper.ShouldBeFalse();
+        decision.Admission.ShouldBe(CandleAdmission.FutureTimestamp);
+        decision.Reason.ShouldNotBeNullOrWhiteSpace();
+    }
+
+    [Fact]
+    public void Receipt_beyond_the_clock_skew_is_not_tradable()
+    {
+        var decision = CandleProcessingDecision.Evaluate(
+            true,
+            Now,
+            Now + CandleProcessingDecision.FutureClockSkew + TimeSpan.FromTicks(1),
+            Now,
+            Window);
+
+        decision.CanPersistHistory.ShouldBeTrue();
+        decision.CanUpdatePaper.ShouldBeFalse();
+        decision.Admission.ShouldBe(CandleAdmission.FutureTimestamp);
+    }
 }

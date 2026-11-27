@@ -28,6 +28,7 @@ namespace CryptoTrader.Application.Paper;
 public sealed class PaperTradingCoordinator(
     ITradingAccountRepository accounts,
     IPaperStateRepository paperState,
+    IPaperTradingControl tradingControl,
     IInstrumentRepository instruments,
     ICandleRepository candles,
     IStrategyInstanceRepository strategyInstances,
@@ -61,6 +62,12 @@ public sealed class PaperTradingCoordinator(
         string? quoteAsset,
         CancellationToken cancellationToken) =>
         WithGateAsync(cancellationToken, token => EngageEmergencyStopCoreAsync(reason, exchange, quoteAsset, token));
+
+    public Task<EmergencyStopOutcome> ReleaseEmergencyStopAsync(
+        string? exchange,
+        string? quoteAsset,
+        CancellationToken cancellationToken) =>
+        WithGateAsync(cancellationToken, token => ReleaseEmergencyStopCoreAsync(exchange, quoteAsset, token));
 
     public Task<IReadOnlyList<PaperAccountSummary>> ListAccountsAsync(CancellationToken cancellationToken) =>
         WithGateAsync(cancellationToken, ListAccountsCoreAsync);
@@ -128,6 +135,7 @@ public sealed class PaperTradingCoordinator(
         }
 
         var account = await GetOrCreateAccountAsync(instrument.Exchange, instrument.QuoteAsset, cancellationToken);
+        var existingState = await paperState.LoadAsync(account.Id, cancellationToken);
         var ledger = await LoadLedgerAsync(account, instrument.QuoteAsset, cancellationToken);
         var candleKey = PaperCandleKey.For(candle);
         if (ledger.HasAppliedCandle(candleKey))
@@ -138,6 +146,21 @@ public sealed class PaperTradingCoordinator(
                 ledger.Exchange.Value,
                 ledger.QuoteAsset);
             return PaperCandleResult.Applied("Candle was already applied.");
+        }
+
+        if (ledger.EmergencyStop)
+        {
+            if (existingState is null || !existingState.EmergencyStop)
+            {
+                await SaveLedgerAsync(account, ledger, cancellationToken);
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+            }
+
+            logger.LogInformation(
+                "Paper trading deferred for {Exchange} {QuoteAsset}: emergency stop is engaged.",
+                ledger.Exchange.Value,
+                ledger.QuoteAsset);
+            return PaperCandleResult.Deferred("Emergency stop is engaged.");
         }
 
         ledger.ObserveMark(instrument.Id, new Price(candle.Close), asOf);
@@ -396,24 +419,95 @@ public sealed class PaperTradingCoordinator(
         var now = UtcTime.Normalize(timeProvider.GetUtcNow());
         var exchangeFilter = ParseExchange(exchange);
         var quoteFilter = string.IsNullOrWhiteSpace(quoteAsset) ? null : PaperAccountScope.NormalizeQuote(quoteAsset);
-        var targets = await SelectAccountsAsync(exchangeFilter, quoteFilter, cancellationToken);
-        if (targets.Count == 0)
+        var normalizedReason = string.IsNullOrWhiteSpace(reason) ? "Emergency stop." : reason.Trim();
+        if (exchangeFilter is null && quoteFilter is null)
         {
-            if (exchangeFilter is null && quoteFilter is null)
+            await tradingControl.EngageAsync(normalizedReason, now, cancellationToken);
+            var existing = await SelectAccountsAsync(null, null, cancellationToken);
+            if (existing.Count == 0)
             {
-                targets = [await GetOrCreateAccountAsync(ExchangeId.Bybit, DefaultQuoteAsset, cancellationToken)];
+                return new EmergencyStopOutcome(true, now);
             }
-            else if (exchangeFilter is ExchangeId selected && quoteFilter is not null)
-            {
-                targets = [await GetOrCreateAccountAsync(selected, quoteFilter, cancellationToken)];
-            }
-            else
-            {
-                return new EmergencyStopOutcome(false, now);
-            }
+
+            return await EngageLedgersAsync(existing, quoteFilter, normalizedReason, now, cancellationToken);
         }
 
-        var normalizedReason = string.IsNullOrWhiteSpace(reason) ? "Emergency stop." : reason.Trim();
+        if (exchangeFilter is not ExchangeId selected || quoteFilter is null)
+        {
+            return new EmergencyStopOutcome(false, now);
+        }
+
+        var targets = await SelectAccountsAsync(selected, quoteFilter, cancellationToken);
+        if (targets.Count == 0)
+        {
+            targets = [await GetOrCreateAccountAsync(selected, quoteFilter, cancellationToken)];
+        }
+
+        return await EngageLedgersAsync(targets, quoteFilter, normalizedReason, now, cancellationToken);
+    }
+
+    private async Task<EmergencyStopOutcome> ReleaseEmergencyStopCoreAsync(
+        string? exchange,
+        string? quoteAsset,
+        CancellationToken cancellationToken)
+    {
+        var now = UtcTime.Normalize(timeProvider.GetUtcNow());
+        var exchangeFilter = ParseExchange(exchange);
+        var quoteFilter = string.IsNullOrWhiteSpace(quoteAsset) ? null : PaperAccountScope.NormalizeQuote(quoteAsset);
+        if (exchangeFilter is null && quoteFilter is null)
+        {
+            await tradingControl.ReleaseAsync(now, cancellationToken);
+            foreach (var account in await SelectAccountsAsync(null, null, cancellationToken))
+            {
+                var quote = await QuoteForAsync(account, cancellationToken) ?? DefaultQuoteAsset;
+                var ledger = await LoadLedgerAsync(account, quote, cancellationToken);
+                if (!ledger.EmergencyStop)
+                {
+                    continue;
+                }
+
+                ledger.ReleaseEmergencyStop(now);
+                await SaveLedgerAsync(account, ledger, cancellationToken);
+                await unitOfWork.SaveChangesAsync(cancellationToken);
+            }
+
+            return new EmergencyStopOutcome(false, now);
+        }
+
+        if (exchangeFilter is not ExchangeId selected || quoteFilter is null)
+        {
+            var control = await tradingControl.GetAsync(cancellationToken);
+            return new EmergencyStopOutcome(control.EmergencyStop, control.UpdatedAtUtc ?? now);
+        }
+
+        if ((await tradingControl.GetAsync(cancellationToken)).EmergencyStop)
+        {
+            return new EmergencyStopOutcome(true, now);
+        }
+
+        foreach (var account in await SelectAccountsAsync(selected, quoteFilter, cancellationToken))
+        {
+            var ledger = await LoadLedgerAsync(account, quoteFilter, cancellationToken);
+            if (!ledger.EmergencyStop)
+            {
+                continue;
+            }
+
+            ledger.ReleaseEmergencyStop(now);
+            await SaveLedgerAsync(account, ledger, cancellationToken);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
+
+        return new EmergencyStopOutcome(false, now);
+    }
+
+    private async Task<EmergencyStopOutcome> EngageLedgersAsync(
+        IReadOnlyList<TradingAccount> targets,
+        string? quoteFilter,
+        string reason,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
         var engaged = false;
         var occurredAt = now;
         foreach (var account in targets)
@@ -421,7 +515,7 @@ public sealed class PaperTradingCoordinator(
             var quote = quoteFilter ?? await QuoteForAsync(account, cancellationToken) ?? DefaultQuoteAsset;
             var ledger = await LoadLedgerAsync(account, quote, cancellationToken);
             var wasEngaged = ledger.EmergencyStop;
-            ledger.EngageEmergencyStop(now, normalizedReason);
+            ledger.EngageEmergencyStop(now, reason);
             if (!wasEngaged)
             {
                 await SaveLedgerAsync(account, ledger, cancellationToken);
@@ -691,15 +785,23 @@ public sealed class PaperTradingCoordinator(
         string quoteAsset,
         CancellationToken cancellationToken)
     {
+        var control = await tradingControl.GetAsync(cancellationToken);
+        var now = UtcTime.Normalize(timeProvider.GetUtcNow());
         var state = await paperState.LoadAsync(account.Id, cancellationToken);
         if (state is null)
         {
-            return PortfolioLedger.Create(
+            var created = PortfolioLedger.Create(
                 executionOptions.Value.PaperInitialEquity,
                 quoteAsset,
                 account.Id,
                 account.Exchange,
-                UtcTime.Normalize(timeProvider.GetUtcNow()));
+                now);
+            if (control.EmergencyStop)
+            {
+                created.EngageEmergencyStop(now, control.Reason ?? "Emergency stop.");
+            }
+
+            return created;
         }
 
         if (state.AccountId != account.Id || !PaperAccountScope.SameExchange(state.Exchange, account.Exchange))
@@ -712,7 +814,7 @@ public sealed class PaperTradingCoordinator(
             throw new InvalidOperationException("Paper state quote asset does not match the requested account scope.");
         }
 
-        var restored = state.Positions
+        var restoredPositions = state.Positions
             .Select(item => Position.Rehydrate(
                 account.Id,
                 state.Exchange,
@@ -731,7 +833,7 @@ public sealed class PaperTradingCoordinator(
                 item.OpenedAtUtc,
                 item.UpdatedAtUtc))
             .ToArray();
-        return PortfolioLedger.Rehydrate(
+        var restored = PortfolioLedger.Rehydrate(
             account.Id,
             state.Exchange,
             state.QuoteAsset,
@@ -742,10 +844,16 @@ public sealed class PaperTradingCoordinator(
             state.DayUtc,
             state.EmergencyStop,
             state.UpdatedAtUtc,
-            restored,
+            restoredPositions,
             state.MarksByInstrument,
             state.AppliedExchangeTradeIds,
             state.AppliedCandleKeys);
+        if (control.EmergencyStop && !restored.EmergencyStop)
+        {
+            restored.EngageEmergencyStop(now, control.Reason ?? "Emergency stop.");
+        }
+
+        return restored;
     }
 
     private async Task SaveLedgerAsync(TradingAccount account, PortfolioLedger ledger, CancellationToken cancellationToken)

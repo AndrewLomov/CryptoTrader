@@ -10,6 +10,7 @@ public enum CandleAdmission
     NotClosed = 1,
     StaleClose = 2,
     ConsumerBehind = 3,
+    FutureTimestamp = 4,
 }
 
 /// <summary>
@@ -23,6 +24,12 @@ public readonly record struct CandleProcessingDecision(
     CandleAdmission Admission,
     string? Reason)
 {
+    /// <summary>
+    /// Close or receipt times this far ahead of the local clock are still eligible.
+    /// A larger lead is a future timestamp and must not enter paper trading.
+    /// </summary>
+    public static readonly TimeSpan FutureClockSkew = TimeSpan.FromSeconds(5);
+
     public static TimeSpan Window(int staleAfterSeconds)
     {
         if (staleAfterSeconds <= 0)
@@ -43,11 +50,25 @@ public readonly record struct CandleProcessingDecision(
         DateTimeOffset closeTimeUtc,
         DateTimeOffset? receivedAtUtc,
         DateTimeOffset utcNow,
-        TimeSpan staleAfter)
+        TimeSpan staleAfter) =>
+        Evaluate(isClosed, closeTimeUtc, receivedAtUtc, utcNow, staleAfter, FutureClockSkew);
+
+    public static CandleProcessingDecision Evaluate(
+        bool isClosed,
+        DateTimeOffset closeTimeUtc,
+        DateTimeOffset? receivedAtUtc,
+        DateTimeOffset utcNow,
+        TimeSpan staleAfter,
+        TimeSpan futureSkew)
     {
         if (staleAfter <= TimeSpan.Zero)
         {
             throw new ArgumentOutOfRangeException(nameof(staleAfter), "The stale window must be greater than zero.");
+        }
+
+        if (futureSkew < TimeSpan.Zero)
+        {
+            throw new ArgumentOutOfRangeException(nameof(futureSkew), "The future clock skew cannot be negative.");
         }
 
         if (!isClosed)
@@ -55,7 +76,17 @@ public readonly record struct CandleProcessingDecision(
             return new CandleProcessingDecision(false, false, CandleAdmission.NotClosed, "Candle is not closed.");
         }
 
-        if (receivedAtUtc is DateTimeOffset received && Lag(utcNow, received) > staleAfter)
+        if (receivedAtUtc is DateTimeOffset received && received - utcNow > futureSkew)
+        {
+            return Future("Candle receipt time is in the future.");
+        }
+
+        if (closeTimeUtc - utcNow > futureSkew)
+        {
+            return Future("Candle close time is in the future.");
+        }
+
+        if (receivedAtUtc is DateTimeOffset receivedAt && utcNow - receivedAt > staleAfter)
         {
             return new CandleProcessingDecision(
                 true,
@@ -64,7 +95,7 @@ public readonly record struct CandleProcessingDecision(
                 "Channel consumer is behind.");
         }
 
-        if (Lag(utcNow, closeTimeUtc) > staleAfter)
+        if (utcNow - closeTimeUtc > staleAfter)
         {
             return new CandleProcessingDecision(
                 true,
@@ -76,9 +107,6 @@ public readonly record struct CandleProcessingDecision(
         return new CandleProcessingDecision(true, true, CandleAdmission.Eligible, null);
     }
 
-    private static TimeSpan Lag(DateTimeOffset utcNow, DateTimeOffset earlier)
-    {
-        var lag = utcNow - earlier;
-        return lag < TimeSpan.Zero ? TimeSpan.Zero : lag;
-    }
+    private static CandleProcessingDecision Future(string reason) =>
+        new(true, false, CandleAdmission.FutureTimestamp, reason);
 }

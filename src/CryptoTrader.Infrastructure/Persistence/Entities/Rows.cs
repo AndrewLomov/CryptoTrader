@@ -554,3 +554,14 @@ public sealed class PaperAccountRow
 
     public DateTimeOffset UpdatedAtUtc { get; set; }
 }
+
+public sealed class PaperTradingControlRow
+{
+    public int Id { get; set; }
+
+    public bool EmergencyStop { get; set; }
+
+    public string? Reason { get; set; }
+
+    public DateTimeOffset UpdatedAtUtc { get; set; }
+}

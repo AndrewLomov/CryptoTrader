@@ -3,7 +3,6 @@ using CryptoTrader.Application.Abstractions.MarketData;
 using CryptoTrader.Application.Abstractions.Persistence;
 using CryptoTrader.Application.Configuration;
 using CryptoTrader.Application.MarketData;
-using CryptoTrader.Application.Paper;
 using CryptoTrader.Domain.Common;
 using CryptoTrader.Domain.Instruments;
 using Instrument = CryptoTrader.Domain.Instruments.Instrument;
@@ -17,8 +16,6 @@ namespace CryptoTrader.Host.MarketData;
 public sealed class CandleIngestionService : BackgroundService
 {
     public const string MeterName = "CryptoTrader.MarketData";
-
-    private const int PendingReplayLimit = 500;
 
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IOptions<MarketDataOptions> _marketDataOptions;
@@ -75,7 +72,9 @@ public sealed class CandleIngestionService : BackgroundService
             return;
         }
 
-        await Task.WhenAll(subscriptions.Select(subscription => IngestAsync(subscription, stoppingToken)));
+        var work = subscriptions.Select(subscription => IngestAsync(subscription, stoppingToken)).ToList();
+        work.Add(RetryPendingAsync(stoppingToken));
+        await Task.WhenAll(work);
     }
 
     private async Task ReplayPendingAsync(CancellationToken stoppingToken)
@@ -110,65 +109,54 @@ public sealed class CandleIngestionService : BackgroundService
         while (!stoppingToken.IsCancellationRequested)
         {
             await using var scope = _scopeFactory.CreateAsyncScope();
-            var checkpoint = scope.ServiceProvider.GetRequiredService<ICandleConsumerCheckpoint>();
-            var coordinator = scope.ServiceProvider.GetRequiredService<PaperTradingCoordinator>();
-            var pending = await checkpoint.ListPendingCandlesAsync(
-                ICandleConsumerCheckpoint.PaperConsumer,
-                PendingReplayLimit,
-                stoppingToken);
-            if (pending.Count == 0)
+            var processor = scope.ServiceProvider.GetRequiredService<CandleIngestionProcessor>();
+            var batch = await processor.ReplayPendingAsync(stoppingToken);
+            if (batch.Count == 0 || batch.LeftPending || batch.Count < CandleIngestionProcessor.PendingReplayLimit)
+            {
+                return;
+            }
+        }
+    }
+
+    private async Task RetryPendingAsync(CancellationToken stoppingToken)
+    {
+        var delaySeconds = 1;
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            if (!await DelayAsync(delaySeconds, stoppingToken))
             {
                 return;
             }
 
-            var progressed = false;
-            var leftPending = false;
-            foreach (var candle in pending)
+            try
             {
-                stoppingToken.ThrowIfCancellationRequested();
-                PaperCandleResult result;
-                try
+                var leftPending = false;
+                while (!stoppingToken.IsCancellationRequested)
                 {
-                    result = await AdmitReplayAsync(coordinator, candle, stoppingToken);
-                }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception exception)
-                {
-                    leftPending = true;
-                    _logger.LogWarning(
-                        exception,
-                        "Pending candle for {InstrumentId} at {OpenTime} was left pending.",
-                        candle.Instrument.Value,
-                        candle.OpenTimeUtc);
-                    continue;
+                    await using var scope = _scopeFactory.CreateAsyncScope();
+                    var processor = scope.ServiceProvider.GetRequiredService<CandleIngestionProcessor>();
+                    var batch = await processor.ReplayPendingAsync(stoppingToken);
+                    if (batch.LeftPending)
+                    {
+                        leftPending = true;
+                    }
+
+                    if (batch.Count == 0 || batch.LeftPending || batch.Count < CandleIngestionProcessor.PendingReplayLimit)
+                    {
+                        break;
+                    }
                 }
 
-                try
-                {
-                    await CompleteCheckpointAsync(checkpoint, candle, result, stoppingToken);
-                    progressed = true;
-                }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception exception)
-                {
-                    leftPending = true;
-                    _logger.LogWarning(
-                        exception,
-                        "Paper ran for {InstrumentId} at {OpenTime}, but the checkpoint stayed pending.",
-                        candle.Instrument.Value,
-                        candle.OpenTimeUtc);
-                }
+                delaySeconds = leftPending ? Math.Min(delaySeconds * 2, 60) : 1;
             }
-
-            if (leftPending || !progressed || pending.Count < PendingReplayLimit)
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
                 return;
+            }
+            catch (Exception exception) when (!IsMissingCheckpoint(exception))
+            {
+                _logger.LogWarning(exception, "Pending candle replay failed. Retrying.");
+                delaySeconds = Math.Min(delaySeconds * 2, 60);
             }
         }
     }
@@ -341,7 +329,9 @@ public sealed class CandleIngestionService : BackgroundService
                 var decision = EvaluateClosedCandle(target, observed);
                 try
                 {
-                    await PersistAndTradeAsync(observed.Candle, decision, stoppingToken);
+                    await using var scope = _scopeFactory.CreateAsyncScope();
+                    var processor = scope.ServiceProvider.GetRequiredService<CandleIngestionProcessor>();
+                    await processor.PersistAndTradeAsync(observed.Candle, decision, stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -427,107 +417,6 @@ public sealed class CandleIngestionService : BackgroundService
         }
 
         return new InstrumentResolution(instrument, null);
-    }
-
-    private async Task PersistAndTradeAsync(
-        Candle candle,
-        CandleProcessingDecision decision,
-        CancellationToken cancellationToken)
-    {
-        await using var scope = _scopeFactory.CreateAsyncScope();
-        var repository = scope.ServiceProvider.GetRequiredService<ICandleRepository>();
-        var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-        var checkpoint = scope.ServiceProvider.GetRequiredService<ICandleConsumerCheckpoint>();
-        var coordinator = scope.ServiceProvider.GetRequiredService<PaperTradingCoordinator>();
-        if (decision.CanPersistHistory)
-        {
-            await repository.UpsertRangeAsync([candle], cancellationToken);
-            await unitOfWork.SaveChangesAsync(cancellationToken);
-        }
-
-        var pending = await checkpoint.MarkPendingAsync(
-            candle,
-            ICandleConsumerCheckpoint.PaperConsumer,
-            _timeProvider.GetUtcNow(),
-            cancellationToken);
-        if (!pending)
-        {
-            return;
-        }
-
-        if (!decision.CanUpdatePaper)
-        {
-            await checkpoint.MarkSkippedAsync(
-                candle,
-                ICandleConsumerCheckpoint.PaperConsumer,
-                decision.Reason ?? "Candle is not eligible for paper trading.",
-                _timeProvider.GetUtcNow(),
-                cancellationToken);
-            return;
-        }
-
-        PaperCandleResult result;
-        try
-        {
-            result = await coordinator.OnClosedCandleAsync(candle, cancellationToken);
-        }
-        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception exception)
-        {
-            _logger.LogWarning(
-                exception,
-                "Paper trading failed for {InstrumentId} candle at {CloseTime}. Leaving the candle pending.",
-                candle.Instrument.Value,
-                candle.CloseTimeUtc);
-            return;
-        }
-
-        await CompleteCheckpointAsync(checkpoint, candle, result, cancellationToken);
-    }
-
-    private async Task<PaperCandleResult> AdmitReplayAsync(
-        PaperTradingCoordinator coordinator,
-        Candle candle,
-        CancellationToken cancellationToken)
-    {
-        var decision = CandleProcessingDecision.Evaluate(
-            candle.IsClosed,
-            candle.CloseTimeUtc,
-            receivedAtUtc: null,
-            _timeProvider.GetUtcNow(),
-            StaleAfter());
-        if (!decision.CanUpdatePaper)
-        {
-            _logger.LogInformation(
-                "Pending {Exchange} {InstrumentId} candle closed at {CloseTime} is not eligible for paper trading: {Reason}.",
-                candle.Exchange.Value,
-                candle.Instrument.Value,
-                candle.CloseTimeUtc,
-                decision.Reason);
-            return PaperCandleResult.Skipped(decision.Reason);
-        }
-
-        return await coordinator.OnClosedCandleAsync(candle, cancellationToken);
-    }
-
-    private Task CompleteCheckpointAsync(
-        ICandleConsumerCheckpoint checkpoint,
-        Candle candle,
-        PaperCandleResult result,
-        CancellationToken cancellationToken)
-    {
-        var now = _timeProvider.GetUtcNow();
-        return result.WasApplied
-            ? checkpoint.MarkProcessedAsync(candle, ICandleConsumerCheckpoint.PaperConsumer, now, cancellationToken)
-            : checkpoint.MarkSkippedAsync(
-                candle,
-                ICandleConsumerCheckpoint.PaperConsumer,
-                result.Reason ?? "Paper trading skipped the candle.",
-                now,
-                cancellationToken);
     }
 
     private CandleProcessingDecision EvaluateClosedCandle(IngestionTarget target, CandleObserved observed)

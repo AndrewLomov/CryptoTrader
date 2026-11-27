@@ -236,6 +236,21 @@ internal static class TradingApiExtensions
             return Results.Ok(new EmergencyStopResponse(outcome.EmergencyStop, outcome.OccurredAtUtc));
         });
 
+        api.MapPost("/risk/emergency-stop/release", async (
+            HttpRequest http,
+            PaperTradingCoordinator paper,
+            CancellationToken cancellationToken) =>
+        {
+            EmergencyStopRequest? request = null;
+            if (http.ContentLength is > 0)
+            {
+                request = await http.ReadFromJsonAsync<EmergencyStopRequest>(cancellationToken);
+            }
+
+            var outcome = await paper.ReleaseEmergencyStopAsync(request?.Exchange, request?.QuoteAsset, cancellationToken);
+            return Results.Ok(new EmergencyStopResponse(outcome.EmergencyStop, outcome.OccurredAtUtc));
+        });
+
         return app;
     }
 

@@ -25,13 +25,27 @@ internal sealed class CandleRepository : ICandleRepository
             return;
         }
 
+        if (_db.Database.CurrentTransaction is not null)
+        {
+            await StageAsync(candles, cancellationToken);
+            await _db.SaveChangesAsync(cancellationToken);
+            return;
+        }
+
+        await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
+        await StageAsync(candles, cancellationToken);
+        await _db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private async Task StageAsync(IReadOnlyList<Candle> candles, CancellationToken cancellationToken)
+    {
         var incoming = new Dictionary<CandleIdentity, Candle>(candles.Count);
         foreach (var candle in candles)
         {
             incoming[CandleIdentity.From(candle)] = candle;
         }
 
-        await using var transaction = await _db.Database.BeginTransactionAsync(cancellationToken);
         foreach (var group in incoming.GroupBy(pair => (
             ExchangeId: pair.Key.ExchangeId,
             InstrumentId: pair.Key.InstrumentId,
@@ -78,9 +92,6 @@ internal sealed class CandleRepository : ICandleRepository
                 }
             }
         }
-
-        await _db.SaveChangesAsync(cancellationToken);
-        await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<Candle>> GetRangeAsync(

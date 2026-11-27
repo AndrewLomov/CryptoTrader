@@ -45,6 +45,7 @@ public static class ApplicationServiceCollectionExtensions
         services.AddScoped<StrategyAdminService>();
         services.AddScoped<BacktestAdminService>();
         services.AddScoped<PaperTradingCoordinator>();
+        services.AddScoped<CandleIngestionProcessor>();
         return services;
     }
 }

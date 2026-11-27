@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using CryptoTrader.Application.Abstractions.Execution;
+using CryptoTrader.Application.Abstractions.MarketData;
 using CryptoTrader.Application.Abstractions.Paper;
 using CryptoTrader.Application.Abstractions.Persistence;
 using CryptoTrader.Application.Abstractions.Risk;
@@ -208,6 +209,131 @@ public sealed class PaperTradingCoordinatorTests
         decision.Admission.ShouldBe(CandleAdmission.ConsumerBehind);
     }
 
+    [Fact]
+    public async Task Global_emergency_stop_blocks_accounts_created_afterwards_until_release()
+    {
+        var world = new World(Now);
+        var bybitUsdt = world.AddSpot(ExchangeId.Bybit, "BYBIT-SPOT-BTCUSDT", "BTCUSDT", "BTC", "USDT");
+        var bybitUsdc = world.AddSpot(ExchangeId.Bybit, "BYBIT-SPOT-BTCUSDC", "BTCUSDC", "BTC", "USDC");
+        var okx = world.AddSpot(ExchangeId.Okx, "OKX-SPOT-BTC-USDT", "BTC-USDT", "BTC", "USDT");
+        world.Run(bybitUsdt);
+        world.Run(bybitUsdc);
+        world.Run(okx);
+
+        var engaged = await world.Coordinator.EngageEmergencyStopAsync("halt", null, null, CancellationToken.None);
+
+        engaged.EmergencyStop.ShouldBeTrue();
+        world.Accounts.ShouldBeEmpty();
+        await world.Processor.PersistAndTradeAsync(world.Candle(bybitUsdt, Now - TimeSpan.FromSeconds(20), 100m), Eligible(), CancellationToken.None);
+        await world.Processor.PersistAndTradeAsync(world.Candle(bybitUsdc, Now - TimeSpan.FromSeconds(30), 100m), Eligible(), CancellationToken.None);
+        await world.Processor.PersistAndTradeAsync(world.Candle(okx, Now - TimeSpan.FromSeconds(40), 100m), Eligible(), CancellationToken.None);
+
+        world.Orders.ShouldBeEmpty();
+        world.Strategy.Calls.ShouldBe(0);
+        world.State(ExchangeId.Bybit, "USDT").EmergencyStop.ShouldBeTrue();
+        world.State(ExchangeId.Bybit, "USDC").EmergencyStop.ShouldBeTrue();
+        world.State(ExchangeId.Okx, "USDT").EmergencyStop.ShouldBeTrue();
+        world.Checkpoint(bybitUsdt, Now - TimeSpan.FromSeconds(20)).ShouldBe(CandleConsumerState.Pending);
+
+        var released = await world.Coordinator.ReleaseEmergencyStopAsync(null, null, CancellationToken.None);
+        var replay = await world.Processor.ReplayPendingAsync(CancellationToken.None);
+
+        released.EmergencyStop.ShouldBeFalse();
+        replay.LeftPending.ShouldBeFalse();
+        world.State(ExchangeId.Bybit, "USDT").EmergencyStop.ShouldBeFalse();
+        world.State(ExchangeId.Bybit, "USDC").EmergencyStop.ShouldBeFalse();
+        world.State(ExchangeId.Okx, "USDT").EmergencyStop.ShouldBeFalse();
+        world.Orders.Count.ShouldBe(3);
+        world.Strategy.Calls.ShouldBe(3);
+        world.Checkpoint(bybitUsdt, Now - TimeSpan.FromSeconds(20)).ShouldBe(CandleConsumerState.Processed);
+    }
+
+    [Fact]
+    public async Task Stale_ingestion_stores_the_candle_and_skips_the_checkpoint()
+    {
+        var world = new World(Now);
+        var bybit = world.AddSpot(ExchangeId.Bybit, "BYBIT-SPOT-BTCUSDT", "BTCUSDT", "BTC", "USDT");
+        world.Run(bybit);
+        var close = Now - TimeSpan.FromSeconds(181);
+        var decision = CandleProcessingDecision.Evaluate(true, close, Now, Now, TimeSpan.FromSeconds(180));
+
+        await world.Processor.PersistAndTradeAsync(world.Candle(bybit, close, 100m), decision, CancellationToken.None);
+
+        world.PersistedCandles.Count.ShouldBe(1);
+        world.Checkpoint(bybit, close).ShouldBe(CandleConsumerState.Skipped);
+        world.Orders.ShouldBeEmpty();
+        world.Strategy.Calls.ShouldBe(0);
+        world.Accounts.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Fresh_pending_candle_is_applied_when_replay_runs_again()
+    {
+        var world = new World(Now);
+        var bybit = world.AddSpot(ExchangeId.Bybit, "BYBIT-SPOT-BTCUSDT", "BTCUSDT", "BTC", "USDT");
+        world.Run(bybit);
+        var candle = world.Candle(bybit, Now - TimeSpan.FromSeconds(20), 100m);
+        await world.Processor.PersistAndTradeAsync(candle, Eligible(), CancellationToken.None);
+
+        world.Checkpoint(bybit, candle.CloseTimeUtc).ShouldBe(CandleConsumerState.Processed);
+        world.Orders.Count.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Stale_pending_candle_is_skipped_on_replay()
+    {
+        var world = new World(Now);
+        var bybit = world.AddSpot(ExchangeId.Bybit, "BYBIT-SPOT-BTCUSDT", "BTCUSDT", "BTC", "USDT");
+        var close = Now - TimeSpan.FromSeconds(181);
+        var candle = world.Candle(bybit, close, 100m);
+        await world.StorePending(candle);
+
+        var replay = await world.Processor.ReplayPendingAsync(CancellationToken.None);
+
+        replay.LeftPending.ShouldBeFalse();
+        world.Checkpoint(bybit, close).ShouldBe(CandleConsumerState.Skipped);
+        world.Orders.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Temporary_processing_failure_is_retried_without_restarting()
+    {
+        var world = new World(Now);
+        var bybit = world.AddSpot(ExchangeId.Bybit, "BYBIT-SPOT-BTCUSDT", "BTCUSDT", "BTC", "USDT");
+        world.Run(bybit);
+        world.Strategy.FailNext = true;
+        var candle = world.Candle(bybit, Now - TimeSpan.FromSeconds(20), 100m);
+
+        await Should.ThrowAsync<InvalidOperationException>(() =>
+            world.Processor.PersistAndTradeAsync(candle, Eligible(), CancellationToken.None));
+        world.Checkpoint(bybit, candle.CloseTimeUtc).ShouldBe(CandleConsumerState.Pending);
+        world.Orders.ShouldBeEmpty();
+
+        var replay = await world.Processor.ReplayPendingAsync(CancellationToken.None);
+
+        replay.LeftPending.ShouldBeFalse();
+        world.Checkpoint(bybit, candle.CloseTimeUtc).ShouldBe(CandleConsumerState.Processed);
+        world.Orders.Count.ShouldBe(1);
+        world.Strategy.Calls.ShouldBe(2);
+    }
+
+    [Fact]
+    public async Task Intake_failure_before_commit_leaves_no_checkpoint()
+    {
+        var world = new World(Now);
+        var bybit = world.AddSpot(ExchangeId.Bybit, "BYBIT-SPOT-BTCUSDT", "BTCUSDT", "BTC", "USDT");
+        world.FailNextIntake = true;
+
+        await Should.ThrowAsync<InvalidOperationException>(() =>
+            world.Processor.PersistAndTradeAsync(world.Candle(bybit, Now - TimeSpan.FromSeconds(20), 100m), Eligible(), CancellationToken.None));
+
+        world.PersistedCandles.ShouldBeEmpty();
+        world.PendingCount.ShouldBe(0);
+    }
+
+    private static CandleProcessingDecision Eligible() =>
+        new(true, true, CandleAdmission.Eligible, null);
+
     private sealed class World
     {
         private readonly Store _store = new();
@@ -222,9 +348,12 @@ public sealed class PaperTradingCoordinatorTests
             _staleAfterSeconds = staleAfterSeconds;
             _maxOpenPositions = maxOpenPositions;
             Coordinator = Build(_strategy);
+            Processor = BuildProcessor();
         }
 
         public PaperTradingCoordinator Coordinator { get; private set; }
+
+        public CandleIngestionProcessor Processor { get; private set; }
 
         public CountingStrategy Strategy => _strategy;
 
@@ -298,6 +427,21 @@ public sealed class PaperTradingCoordinatorTests
             _store.States.Values.Single(state =>
                 PaperAccountScope.SameExchange(state.Exchange, exchange) && PaperAccountScope.SameQuote(state.QuoteAsset, quote));
 
+        public CandleConsumerState Checkpoint(Instrument instrument, DateTimeOffset close) =>
+            _store.CheckpointState(instrument, close);
+
+        public IReadOnlyList<Candle> PersistedCandles => _store.Persisted;
+
+        public int PendingCount => _store.PendingCount;
+
+        public bool FailNextIntake
+        {
+            get => _store.FailNextIntake;
+            set => _store.FailNextIntake = value;
+        }
+
+        public Task StorePending(Candle candle) => _store.PersistPendingAsync(candle, ICandleConsumerCheckpoint.PaperConsumer, _time.Utc, CancellationToken.None);
+
         public void SeedAccount(TradingAccountId id, ExchangeId exchange, string quote, decimal cash)
         {
             var account = TradingAccount.Create(id, exchange, "Paper", TradingMode.Paper, _time.Utc);
@@ -324,8 +468,17 @@ public sealed class PaperTradingCoordinatorTests
             var restarted = new World(_time.Utc, _staleAfterSeconds, _maxOpenPositions);
             restarted._store.CopyFrom(_store);
             restarted.Coordinator = restarted.Build(restarted._strategy);
+            restarted.Processor = restarted.BuildProcessor();
             return restarted;
         }
+
+        private CandleIngestionProcessor BuildProcessor() => new(
+            _store,
+            _store,
+            Coordinator,
+            _time,
+            Options.Create(new MarketDataOptions { StaleAfterSeconds = _staleAfterSeconds, DefaultTimeframes = ["1h"] }),
+            NullLogger<CandleIngestionProcessor>.Instance);
 
         private PaperTradingCoordinator Build(CountingStrategy strategy)
         {
@@ -339,6 +492,7 @@ public sealed class PaperTradingCoordinatorTests
                 RiskPerTradePercent = 0.5m,
             });
             return new PaperTradingCoordinator(
+                _store,
                 _store,
                 _store,
                 _store,
@@ -366,6 +520,8 @@ public sealed class PaperTradingCoordinatorTests
     {
         public int Calls { get; private set; }
 
+        public bool FailNext { get; set; }
+
         public List<InstrumentId> Instruments { get; } = [];
 
         public string Id => "test";
@@ -377,6 +533,12 @@ public sealed class PaperTradingCoordinatorTests
         public ValueTask<IReadOnlyList<TradeSignal>> EvaluateAsync(StrategyContext context, CancellationToken cancellationToken)
         {
             Calls++;
+            if (FailNext)
+            {
+                FailNext = false;
+                throw new InvalidOperationException("temporary strategy failure");
+            }
+
             Instruments.Add(context.Instrument.Id);
             var close = context.ClosedWorkingCandles[^1].Close;
             var signalId = new Guid(SHA256.HashData(Encoding.UTF8.GetBytes(context.Instrument.Id.Value)).AsSpan(0, 16));
@@ -454,8 +616,11 @@ public sealed class PaperTradingCoordinatorTests
     private sealed class Store :
         ITradingAccountRepository,
         IPaperStateRepository,
+        IPaperTradingControl,
         IInstrumentRepository,
         ICandleRepository,
+        ICandleIntake,
+        ICandleConsumerCheckpoint,
         IStrategyInstanceRepository,
         ITradeSignalRepository,
         IOrderRepository,
@@ -474,6 +639,23 @@ public sealed class PaperTradingCoordinatorTests
         public Dictionary<Guid, Order> Orders { get; } = [];
 
         public HashSet<Guid> SignalIds { get; } = [];
+
+        public List<Candle> Persisted { get; } = [];
+
+        public bool FailNextIntake { get; set; }
+
+        public bool GlobalEmergencyStop { get; private set; }
+
+        public string? GlobalReason { get; private set; }
+
+        public DateTimeOffset? GlobalUpdatedAt { get; private set; }
+
+        private readonly Dictionary<string, CheckpointRow> _checkpoints = [];
+
+        public int PendingCount => _checkpoints.Values.Count(row => row.State == CandleConsumerState.Pending);
+
+        public CandleConsumerState CheckpointState(Instrument instrument, DateTimeOffset close) =>
+            _checkpoints.Values.Single(row => row.Candle.Instrument == instrument.Id && row.Candle.CloseTimeUtc == close).State;
 
         public Task<TradingAccount?> FindAsync(TradingAccountId id, CancellationToken cancellationToken) =>
             Task.FromResult(Accounts.TryGetValue(id, out var account) ? account : null);
@@ -580,6 +762,76 @@ public sealed class PaperTradingCoordinatorTests
 
         public Task SaveChangesAsync(CancellationToken cancellationToken) => Task.CompletedTask;
 
+        public Task<PaperTradingControlState> GetAsync(CancellationToken cancellationToken) =>
+            Task.FromResult(new PaperTradingControlState(GlobalEmergencyStop, GlobalReason, GlobalUpdatedAt));
+
+        public Task EngageAsync(string reason, DateTimeOffset updatedAtUtc, CancellationToken cancellationToken)
+        {
+            GlobalEmergencyStop = true;
+            GlobalReason = reason;
+            GlobalUpdatedAt = updatedAtUtc;
+            return Task.CompletedTask;
+        }
+
+        public Task ReleaseAsync(DateTimeOffset updatedAtUtc, CancellationToken cancellationToken)
+        {
+            GlobalEmergencyStop = false;
+            GlobalReason = null;
+            GlobalUpdatedAt = updatedAtUtc;
+            return Task.CompletedTask;
+        }
+
+        public Task<bool> PersistPendingAsync(Candle candle, string consumer, DateTimeOffset updatedAtUtc, CancellationToken cancellationToken)
+        {
+            if (FailNextIntake)
+            {
+                FailNextIntake = false;
+                throw new InvalidOperationException("intake stopped before commit");
+            }
+
+            Persisted.Add(candle);
+            return MarkPendingAsync(candle, consumer, updatedAtUtc, cancellationToken);
+        }
+
+        public Task<bool> MarkPendingAsync(Candle candle, string consumer, DateTimeOffset updatedAtUtc, CancellationToken cancellationToken)
+        {
+            var key = CheckpointKey(candle, consumer);
+            if (_checkpoints.TryGetValue(key, out var existing)
+                && existing.State is CandleConsumerState.Processed or CandleConsumerState.Skipped)
+            {
+                return Task.FromResult(false);
+            }
+
+            _checkpoints[key] = new CheckpointRow(candle, consumer, CandleConsumerState.Pending, null);
+            return Task.FromResult(true);
+        }
+
+        public Task MarkProcessedAsync(Candle candle, string consumer, DateTimeOffset updatedAtUtc, CancellationToken cancellationToken)
+        {
+            _checkpoints[CheckpointKey(candle, consumer)] = new CheckpointRow(candle, consumer, CandleConsumerState.Processed, null);
+            return Task.CompletedTask;
+        }
+
+        public Task MarkSkippedAsync(Candle candle, string consumer, string reason, DateTimeOffset updatedAtUtc, CancellationToken cancellationToken)
+        {
+            _checkpoints[CheckpointKey(candle, consumer)] = new CheckpointRow(candle, consumer, CandleConsumerState.Skipped, reason);
+            return Task.CompletedTask;
+        }
+
+        public Task<IReadOnlyList<Candle>> ListPendingCandlesAsync(string consumer, int limit, CancellationToken cancellationToken)
+        {
+            var candles = _checkpoints.Values
+                .Where(row => row.Consumer == consumer && row.State == CandleConsumerState.Pending)
+                .OrderBy(row => row.Candle.OpenTimeUtc)
+                .Take(limit)
+                .Select(row => row.Candle)
+                .ToArray();
+            return Task.FromResult<IReadOnlyList<Candle>>(candles);
+        }
+
+        private static string CheckpointKey(Candle candle, string consumer) =>
+            string.Join('|', candle.Exchange.Value, candle.Instrument.Value, candle.Timeframe.Code, candle.OpenTimeUtc.UtcTicks, consumer);
+
         public void CopyFrom(Store other)
         {
             foreach (var (id, account) in other.Accounts)
@@ -607,6 +859,17 @@ public sealed class PaperTradingCoordinatorTests
             {
                 SignalIds.Add(signal);
             }
+
+            GlobalEmergencyStop = other.GlobalEmergencyStop;
+            GlobalReason = other.GlobalReason;
+            GlobalUpdatedAt = other.GlobalUpdatedAt;
+            Persisted.AddRange(other.Persisted);
+            foreach (var (key, row) in other._checkpoints)
+            {
+                _checkpoints[key] = row;
+            }
         }
+
+        private sealed record CheckpointRow(Candle Candle, string Consumer, CandleConsumerState State, string? Reason);
     }
 }

@@ -122,6 +122,7 @@ Paper 0.1:
 
 - `CandleProcessingDecision` admits a closed candle only when its close age and the queue lag are not strictly greater than `MarketData:StaleAfterSeconds`. Equality is still eligible. A rejected candle can stay in `candles` and is marked Skipped. It does not change cash, equity, marks, signals, orders, or positions.
 - Spot and `VolumeUnit.BaseAsset` are required before the ledger is loaded. A futures instrument or contract volume is rejected first. Bybit and OKX each have their own paper account per quote asset.
+- A close or receipt time more than 5 seconds ahead of the clock is stored and is not paper input (`FutureTimestamp`). A smaller lead is clock skew and stays eligible.
 - An approved signal on a quote asset that does not match the ledger does not call the spot fill.
 - `PaperExecutionVenue` rejects a linear perpetual before creating a paper order.
 - `PortfolioLedger.ApplySpotFill` accepts spot instruments only.

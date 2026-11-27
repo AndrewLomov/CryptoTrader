@@ -315,3 +315,16 @@ internal sealed class PaperAccountRowConfiguration : IEntityTypeConfiguration<Pa
             .HasDatabaseName("ux_paper_accounts_exchange_quote");
     }
 }
+
+internal sealed class PaperTradingControlRowConfiguration : IEntityTypeConfiguration<PaperTradingControlRow>
+{
+    public void Configure(EntityTypeBuilder<PaperTradingControlRow> builder)
+    {
+        builder.ToTable("paper_trading_control");
+        builder.HasKey(x => x.Id);
+        builder.Property(x => x.Id).HasColumnName("id").ValueGeneratedNever();
+        builder.Property(x => x.EmergencyStop).HasColumnName("emergency_stop");
+        builder.Property(x => x.Reason).HasColumnName("reason").HasMaxLength(512);
+        builder.Property(x => x.UpdatedAtUtc).HasColumnName("updated_at_utc");
+    }
+}
