@@ -48,3 +48,7 @@ Paper returns immediately after a stored instrument is found when `instrument.Ty
 - Configured symbols are trimmed and not rewritten, so `BTC-USDT` stays intact. The Bybit fallback still uppercases `Bybit:Symbols`.
 - `ICandleRepository.UpsertRangeAsync` is followed by `IUnitOfWork.SaveChangesAsync` before `MarkPendingAsync`. The current repository also saves inside its own transaction. Checkpoint methods save themselves.
 - If paper succeeds and the following `MarkProcessedAsync` throws, the row stays pending and a later replay can run paper again.
+
+## 27 ноября 2026
+
+Текст выше — срез до правки. Сейчас ключ свечи пишется в книгу вместе с fill. Повтор ключа стратегию не вызывает. Заявка, уже сохранённая без книги, дочитывается по детерминированному client order id и проводится один раз. Устаревшая свеча помечается `Skipped` и в paper не идёт. Остановка одной пары биржа/котировка не останавливает другую. `GET /api/v1/paper-accounts` отдаёт список счетов.

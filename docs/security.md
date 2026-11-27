@@ -73,7 +73,7 @@ Dockerfile не копирует `.env` в слои образа. В образ 
 
 Секция `environment` перекрывает `.env`. Даже при ошибочном `true` в файле окружения контейнер получает `false` из Compose. Если флаг всё же истинный, `Execution:Mode` равен `Live`, либо разрешены futures live или cross margin, валидатор не даёт процессу стартовать.
 
-`ITradingClient.SubmitAsync` при выключенном live не открывает сеть и возвращает отказ `LiveTradingDisabled`. Доменные заявки и счета в режиме Live не создаются.
+`ITradingClient.SubmitAsync` при выключенном live не открывает сеть и возвращает отказ `LiveTradingDisabled`. `GetOrder`, `GetOpenOrders`, `GetPositions`, `Cancel` и чтение счёта бросают `NotSupportedException` и тоже не открывают сеть. Доменные заявки и счета в режиме Live не создаются.
 
 Paper и backtest этот запрет не обходят: paper не создаёт биржевую заявку, backtest читает свечи из хранилища.
 

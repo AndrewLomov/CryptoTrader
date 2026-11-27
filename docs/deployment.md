@@ -214,9 +214,7 @@ Job `build`: `actions/setup-dotnet` со SDK `10.0.x` и версией из `gl
 
 Job `integration`: тот же SDK, проверка `docker version`, тесты `--filter "Category=Integration"`. Trait в тестах — `Category=Integration`. На `ubuntu-latest` Docker уже есть, отдельные Windows-раннеры не используются.
 
-Job `format`: Partially Implemented. Шаг `dotnet format CryptoTrader.slnx --verify-no-changes` стоит с `continue-on-error: true`. Локальный прогон 2026-11-27 завершился с кодом 2: в git-blob `src/CryptoTrader.Infrastructure/Persistence/Migrations/20261127085645_Initial.cs` есть UTF-8 BOM при переводах строк LF, редактор ждёт `charset=utf-8` без BOM. На Windows с `core.autocrlf=true` рабочая копия ещё и CRLF, поэтому локально добавляется `ENDOFLINE`. `Directory.Build.props` не менялся: `TreatWarningsAsErrors` остаётся `false`, `AnalysisLevel` остаётся `latest`.
-
-Дальше: убрать BOM у этой миграции, повторить `dotnet format CryptoTrader.slnx --verify-no-changes` на дереве с LF и кодом 0, затем снять `continue-on-error` и сделать шаг обязательным. Пока BOM на месте, обязательный шаг валит ветку на уже существующем расхождении.
+Job `format`: Implemented. Шаг `dotnet format CryptoTrader.slnx --verify-no-changes` обязательный, `continue-on-error` снят. UTF-8 BOM убран из миграций `Initial`, её Designer и снимка модели. `.gitattributes` фиксирует LF для `*.cs`, чтобы локальный Windows с `core.autocrlf=true` не возвращал `ENDOFLINE`. `Directory.Build.props` не менялся: `TreatWarningsAsErrors` остаётся `false`, `AnalysisLevel` остаётся `latest`.
 
 ## Чего в поставке нет
 

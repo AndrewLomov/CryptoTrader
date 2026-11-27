@@ -76,7 +76,7 @@ The public socket sends raw text `ping` and expects raw text `pong`. The interva
 
 The event channel holds `Okx:ChannelCapacity` items (256) and waits when it is full. Candles, trades, and book snapshots are not dropped. A wait is logged. Tickers are not waited on: only the latest ticker is kept, and a flush about every 50 ms writes it when the channel has room. A full channel therefore does not block candles, trades, or books behind a ticker. Bursts of ticker updates collapse to the newest value.
 
-`OkxTradingClient.SubmitAsync` returns `Accepted` false, `UnknownState` false, `ErrorCode` `LiveTradingDisabled`, and does not open a connection. `GetOrderAsync` returns null. Open orders and positions return empty. `CancelAsync` throws `NotSupportedException`. `OkxAccountClient.GetAccountAsync` throws `NotSupportedException` and does not invent balances.
+`OkxTradingClient.SubmitAsync` returns `Accepted` false, `UnknownState` false, `ErrorCode` `LiveTradingDisabled`, and does not open a connection. `GetOrderAsync`, `GetOpenOrdersAsync`, `GetPositionsAsync`, and `CancelAsync` throw `NotSupportedException`. `OkxAccountClient.GetAccountAsync` throws `NotSupportedException` and does not invent balances. None of those methods open a socket or send a private request.
 
 Capabilities: spot, linear market data, order book, funding, and WebSocket are true. Live orders, private account, and futures accounting are false. The adapter is registered only as `IExchangeAdapter`. `IMarketDataClient` is not registered as a default single service.
 
@@ -98,4 +98,13 @@ HTTP tests can pass an `HttpClient`. WebSocket tests can pass `IOkxSocketConnect
 - REST trades, `trades-all`, and `GET /api/v5/market/tickers`.
 - Margin, inverse, dated futures, options, and `EVENTS`.
 - Demo header `x-simulated-trading: 1`, AWS and colo hosts, and regional US/EU hosts.
-- `Host` does not reference this project yet. `tests/CryptoTrader.Architecture.Tests/DependencyRuleTests.cs` already expects that reference.
+
+`CryptoTrader.Host` references this project. `Program.cs` calls `AddOkx`. `DependencyRuleTests` expects that reference.
+
+## Paper spot
+
+OKX spot paper uses the same coordinator as Bybit. The virtual account is one row per `(exchange, quote asset)`. An OKX USDT fill does not change the Bybit USDT cash balance. Swap candles are stored and are not applied to the spot ledger. `Okx:InstrumentTypes` is trimmed and compared case-insensitively. `SPOT` and `spot` are the same value, and a duplicate fails startup. An unknown type such as `FUTURES` also fails startup.
+
+## Order book limit
+
+`IsConsistent = true` means the REST snapshot or the `books5` push parsed. It does not mean the book is a continuous incremental stream. `books5` carries 5 levels. REST `sz` is 50. Sequence gaps are not recovered. Do not use this book for a decision that needs a proven sequence. Incremental recovery is backlog.

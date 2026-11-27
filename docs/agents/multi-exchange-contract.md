@@ -158,7 +158,7 @@ Application `OkxOptions` (startup validation, no project reference to the adapte
 
 `CandleIngestionService` depends on `IOptions<MarketDataOptions>`, `IExchangeRegistry`, and `ICandleConsumerCheckpoint`. It does not take `BybitOptions` and does not call `GetService<IMarketDataClient>()`.
 
-For each subscription, resolve the adapter with `GetRequired`, resolve the instrument for that exchange, subscribe to closed candles for that timeframe, upsert, mark pending, save, call paper, mark processed. Paper failure leaves the row pending. Startup replays pending candles before the live loop. Paper returns without throwing for non-Bybit and non-spot; those candles are still marked processed.
+For each subscription, resolve the adapter with `GetRequired`, resolve the instrument for that exchange, subscribe to closed candles for that timeframe, upsert, then decide admission. A closed candle whose close age or queue lag is strictly greater than `StaleAfterSeconds` is persisted and marked Skipped. It is not applied to paper. An eligible spot candle with base-asset volume is applied to the paper account for that exchange and quote asset, then marked Processed. Startup replays pending candles. A short outage can still apply a candle whose close is inside the window. A long outage marks it Skipped. Terminal Processed and Skipped are not reopened.
 
 `CandleAdminService.SyncAsync` uses `registry.GetRequired(exchange).MarketData.GetCandleHistoryAsync`. Incomplete history throws and is not stored.
 

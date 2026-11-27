@@ -70,3 +70,7 @@ Job `build` и `integration` оставлены. Обе работают с `Cry
 - `deploy/.env.example` — комментарий без новых секретов.
 - `README.md`, `docs/deployment.md`, `docs/operations-runbook.md`, `docs/security.md` — статусы Implemented / Partially Implemented / Not Implemented по фактическому дереву.
 - `Directory.Build.props` — без изменений.
+
+## 27 ноября 2026
+
+Текст выше описывает неблокирующую job. Сейчас job называется `format`, `continue-on-error` снят. BOM снят с миграций `Initial`, Designer и снимка модели. Добавлен `.gitattributes` с `eol=lf` для `*.cs`. `TreatWarningsAsErrors` не включали. `.vs` снят с индекса, локальные файлы и правило `.gitignore` остаются. Ключи биржи в workflow не добавлялись.

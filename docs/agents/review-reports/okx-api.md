@@ -29,3 +29,7 @@ Check date: 27 November 2026. Spec: `docs/okx-api-reference-notes.md`. Fixtures:
 - `envelope-error.json` copies the published non-zero body (`51000`). A `50011` JSON body was not printed. The live overview describes that code in prose; the 2021 changelog message is the shorter “Requests too frequent.”
 - `ws-pong.json` is the JSON string `"pong"`. On the wire the server sends the raw text `pong`, not an object.
 - English and Chinese order-book sequence text was not compared past the point where the English capture stopped. The sequence rules in the spec are the Chinese section.
+
+## 27 ноября 2026
+
+Текст выше — заметки по страницам V5 и не заменяется. Адаптер по-прежнему публичный. `InstrumentTypes` нормализуются общим правилом: обрезка, верхний регистр, дубликат и неизвестный тип отвергаются на старте. Приватные чтения бросают `NotSupportedException`. Стакан — `books5` и REST `sz=50`. `IsConsistent` означает успешный разбор снимка. Инкрементальное восстановление последовательности не реализовано и записано в `docs/backlog.md`. Демо-заголовок не отправляется.

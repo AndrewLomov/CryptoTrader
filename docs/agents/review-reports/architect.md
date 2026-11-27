@@ -73,3 +73,7 @@ Bybit, OKX, Host, Infrastructure, Backtesting, and `DependencyRuleTests.cs` were
 - Subscription duplicates compare the exchange case-insensitively, the timeframe through `Timeframe.Parse`, and the instrument after trim with ordinal case. Empty `Subscriptions` are valid.
 - `CryptoTrader.Exchanges.Okx` had no source files when this note was written. `docs/architecture.md` marks public OKX data Not Implemented. Host's csproj and `Program.cs` already reference `AddOkx`. No private trading, secrets, or futures accounting were added. `SupportsFuturesAccounting` defaults to false. Live orders stay disabled.
 - EF maps the new candle, instrument, and checkpoint columns. The only migration is still `Initial`, so that row is Partially Implemented. That migration was not edited here.
+
+## 27 ноября 2026
+
+Текст выше описывает более ранний срез и не переписывается. На этом проходе допуск свечи вынесен в `CandleProcessingDecision`. Счёт paper — пара биржа и котируемая валюта, см. ADR 013. Host ссылается на OKX. Миграция `20261127123818_IsolatePaperAccounts` только добавляет колонки и уникальный индекс. Приватный API и демо не добавлялись.

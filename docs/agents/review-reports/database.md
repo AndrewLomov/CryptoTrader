@@ -58,3 +58,7 @@ Generated: yes. `src/CryptoTrader.Infrastructure/Persistence/Migrations/20261127
 - `src/CryptoTrader.Infrastructure/Persistence/Migrations/CryptoTraderDbContextModelSnapshot.cs`
 - `docs/database-schema.md`
 - `docs/agents/review-reports/database.md`
+
+## 27 ноября 2026
+
+Текст выше описывает миграцию `MultiExchangeMarketData` и не переписывается. Добавлена `20261127123818_IsolatePaperAccounts`: `applied_candle_keys jsonb` default `[]`, `skip_reason varchar(512)`, уникальный индекс `(exchange_id, quote_asset)`. `Initial` не переписывалась, кроме снятия UTF-8 BOM. Интеграционный тест поднимает схему до `Initial`, вставляет свечу Bybit и доезжает до последней миграции. Вторая строка с той же парой биржа/котировка даёт `DbUpdateException`. `Skipped` одной биржи не открывает заново и не снимает `Pending` другой.

@@ -36,8 +36,8 @@ dotnet test CryptoTrader.slnx -c Release --filter "Category=Network"
 - `BybitTradingClient.SubmitAsync` возвращает `LiveTradingDisabled`, `Accepted = false`, `UnknownState = false`.
 - Разбор kline идёт через `HttpClient` на `http://127.0.0.1` и локальный JSON.
 - Неполный часовой диапазон Bybit даёт `IncompleteCandleHistoryException`, а не успешный список. Плотный диапазон одной свечи остаётся `Complete`, decimal и UTC проверяются по-прежнему.
-- OKX-тесты читают `tests/CryptoTrader.Exchanges.ContractTests/Fixtures/Okx/` и вызывают реальные `OkxMarketDataClient`, `OkxPublicRest`, `OkxTradingClient`, `OkxAccountClient`. WebSocket идёт через внутренний `IOkxSocketConnector` на `wss://127.0.0.1`. Ссылка на проект включается, когда csproj есть; сейчас он в дереве. `dotnet test` в этом проходе не запускался.
-- Интеграционные тесты не создают биржевой клиент.
+- OKX-тесты читают `tests/CryptoTrader.Exchanges.ContractTests/Fixtures/Okx/` и вызывают реальные `OkxMarketDataClient`, `OkxPublicRest`, `OkxTradingClient`, `OkxAccountClient`. WebSocket идёт через внутренний `IOkxSocketConnector` на `wss://127.0.0.1`. Приватные чтения бросают `NotSupportedException`. `Host` ссылается на проект OKX.
+- Интеграционные тесты не создают биржевой клиент. Им нужен Docker: Testcontainers поднимает `postgres:16-alpine`. Обновление схемы проверяет переход с миграции `Initial` на текущую без потери свечи Bybit.
 
 ## API smoke
 

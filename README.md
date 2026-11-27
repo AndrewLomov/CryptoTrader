@@ -1,6 +1,6 @@
 # CryptoTrader 0.1
 
-Модульный монолит для личного контура: публичные рыночные данные Bybit, paper trading и воспроизводимый backtest. Реальные заявки в этой версии не отправляются.
+Модульный монолит для личного контура: публичные рыночные данные Bybit и OKX, paper trading spot на независимых виртуальных счетах и воспроизводимый backtest. Реальные заявки в этой версии не отправляются.
 
 `Execution:LiveTradingEnabled` должен оставаться `false`. То же самое задано переменной `Execution__LiveTradingEnabled=false` в `deploy/docker-compose.yml`. Если флаг истинный, режим `Live`, `Risk:AllowFuturesLive` или `Risk:AllowCrossMargin`, процесс не стартует.
 
@@ -12,12 +12,16 @@
 |---|---|
 | Публичные рыночные данные Bybit | Implemented |
 | Публичный адаптер OKX | Implemented |
+| Paper spot Bybit и OKX, отдельные счета по бирже и котируемой валюте | Implemented |
+| OKX Demo Trading | Not Implemented |
 | Live-торговля | Not Implemented |
 | Приватный OKX | Not Implemented |
+| Учёт фьючерсов | Not Implemented |
+| Инкрементальный стакан | Not Implemented |
 | `GET /health/live` | Implemented |
 | `GET /health/ready` | Implemented |
 | `GET /health/feeds` | Implemented |
-| Проверка `dotnet format` в CI | Partially Implemented |
+| Проверка `dotnet format` в CI | Implemented |
 
 `src/CryptoTrader.Exchanges.Bybit` входит в `CryptoTrader.slnx`. `Program.cs` вызывает `AddBybit`. Секция `Bybit` в `appsettings.json` задаёт публичный REST `https://api.bybit.com` и публичные WebSocket spot и linear. В `BybitOptions` нет поля API-ключа. Публичный REST покрывает instruments, kline, tickers, order book и funding history. `BybitTradingClient.SubmitAsync` возвращает `LiveTradingDisabled` и сеть не открывает.
 
@@ -38,11 +42,13 @@
 dotnet restore CryptoTrader.slnx
 dotnet build CryptoTrader.slnx -c Release
 dotnet test CryptoTrader.slnx -c Release --filter "Category!=Integration"
+dotnet test CryptoTrader.slnx -c Release --filter "Category=Integration"
+dotnet format CryptoTrader.slnx --verify-no-changes
 ```
 
-Тесты с trait `Category=Integration` ждут Docker. На GitHub Actions их выполняет отдельная job на `ubuntu-latest`. Живых вызовов OKX в workflow нет.
+Тесты с trait `Category=Integration` ждут Docker и PostgreSQL 16 через Testcontainers. На GitHub Actions их выполняет отдельная job на `ubuntu-latest`. Живых вызовов OKX в workflow нет.
 
-Проверка форматирования в CI — job `format` с `continue-on-error: true`. Локальный `dotnet format CryptoTrader.slnx --verify-no-changes` на 2026-11-27 завершился с кодом 2 из-за UTF-8 BOM в миграции `20261127085645_Initial.cs`. Шаг станет обязательным после того, как эта проверка на LF-дереве вернёт 0. `TreatWarningsAsErrors` остаётся `false`. `AnalysisLevel` уже `latest`.
+Проверка форматирования — обязательная job `format`. Она запускает `dotnet format CryptoTrader.slnx --verify-no-changes` без `continue-on-error`. Миграции записаны в UTF-8 без BOM и с переводами строк LF. `.gitattributes` держит `*.cs` в LF, чтобы Windows с `core.autocrlf=true` не возвращал CRLF в рабочую копию. `TreatWarningsAsErrors` остаётся `false`. `AnalysisLevel` уже `latest`.
 
 ## Запуск стека
 
@@ -58,7 +64,7 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Перед запуском замените `Api__AdminApiKey` в `deploy/.env`. Это локальный секрет заголовка `X-Api-Key`. Это не ключ биржи. Ключи Bybit и OKX в Compose и в `.env.example` не задаются. Публичный Bybit и будущий публичный OKX API-ключ биржи не требуют.
+Перед запуском замените `Api__AdminApiKey` в `deploy/.env`. Это локальный секрет заголовка `X-Api-Key`. Это не ключ биржи. Ключи Bybit и OKX в Compose и в `.env.example` не задаются. Публичные Bybit и OKX API-ключ биржи не требуют.
 
 Образ собирается из корня репозитория (`deploy/Dockerfile`, SDK `mcr.microsoft.com/dotnet/sdk:10.0`). Файл `.env` в образ не копируется. Приложение слушает `http://+:8080` и публикуется только на `127.0.0.1:8080`. PostgreSQL 16 публикуется только на `127.0.0.1:5432`.
 

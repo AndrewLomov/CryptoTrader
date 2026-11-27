@@ -120,11 +120,12 @@ Backtest, in `BacktestEngine.RunAsync`:
 
 Paper 0.1:
 
-- `PaperTradingCoordinator` returns before strategy evaluation when the candle is not closed or the instrument is not Bybit.
-- An approved signal on a non-spot instrument, or on a quote asset that does not match the ledger, does not call the spot fill.
+- `CandleProcessingDecision` admits a closed candle only when its close age and the queue lag are not strictly greater than `MarketData:StaleAfterSeconds`. Equality is still eligible. A rejected candle can stay in `candles` and is marked Skipped. It does not change cash, equity, marks, signals, orders, or positions.
+- Spot and `VolumeUnit.BaseAsset` are required before the ledger is loaded. A futures instrument or contract volume is rejected first. Bybit and OKX each have their own paper account per quote asset.
+- An approved signal on a quote asset that does not match the ledger does not call the spot fill.
 - `PaperExecutionVenue` rejects a linear perpetual before creating a paper order.
 - `PortfolioLedger.ApplySpotFill` accepts spot instruments only.
-- Paper does not read `VolumeUnit`. A Bybit linear candle can still reach mark observation and strategy evaluation before the fill is skipped. That path is outside this change. SWAP market data still must not be used as spot base volume there.
+- A candle key is stored on the ledger only after the candle is handled. Replaying that key does not fill again.
 
 ## Closed candles and gaps
 

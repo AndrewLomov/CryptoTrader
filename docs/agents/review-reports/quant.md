@@ -30,3 +30,7 @@ The linear instrument expects `InvalidOperationException`: `BacktestEngine 0.1 a
 ## Compile dependency
 
 `Candle.VolumeUnit` and the trailing `Candle.Create` argument `VolumeUnit` are referenced here and were not on `Candle` yet. Those members belong to the domain contract. This backtest project compiles after they exist.
+
+## 27 ноября 2026
+
+Текст выше оставлен как исторический. Paper теперь читает `VolumeUnit` до загрузки книги: контрактный объём и не-spot счёт не создают и капитал не меняют. Устаревшая свеча не двигает mark, equity, PnL и просадку. Формула spot fill и backtest не менялись. Прибыльность не оценивалась.

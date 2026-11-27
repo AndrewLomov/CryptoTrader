@@ -94,9 +94,9 @@ ON orders (trading_account_id, client_order_id);
 
 ### candle_consumer_checkpoints
 
-Первичный ключ `(exchange_id, instrument_id, timeframe, open_time_utc, consumer)`. Ещё две колонки: `state integer` (`CandleConsumerState`, Pending = 1, Processed = 2) и `updated_at_utc`.
+Первичный ключ `(exchange_id, instrument_id, timeframe, open_time_utc, consumer)`. Колонки: `state integer` (`CandleConsumerState`: Pending = 1, Processed = 2, Skipped = 3), `skip_reason varchar(512)` и `updated_at_utc`.
 
-Строку пишет только `MarkPendingAsync` или `MarkProcessedAsync` для переданной свечи и потребителя. Исторические свечи сами в Pending не ставятся. `ListPendingCandlesAsync` соединяет чекпоинт со `candles` по бирже, инструменту, таймфрейму и времени открытия, отдаёт доменные свечи со `state = Pending`, по возрастанию `open_time_utc`, не больше `limit`.
+Строку пишет `MarkPendingAsync`, `MarkProcessedAsync` или `MarkSkippedAsync`. Уже завершённое состояние (Processed или Skipped) повторный `MarkPendingAsync` не открывает заново. Исторические свечи сами в Pending не ставятся. `ListPendingCandlesAsync` соединяет чекпоинт со `candles` по бирже, инструменту, таймфрейму и времени открытия, отдаёт доменные свечи со `state = Pending`, по возрастанию `open_time_utc`, не больше `limit`.
 
 Внешнего ключа на `candles` нет. Удаление чекпоинта не удаляет свечу, каскада на свечи нет. Соединение включает `exchange_id`, биржи не смешиваются.
 
@@ -170,9 +170,9 @@ PK и FK `run_id` → `backtest_runs`. Колонки метрик отчёта:
 
 ### paper_accounts
 
-Одна строка на счёт. Колонки для запросов: `account_id`, `exchange_id`, `quote_asset`, `cash`, `peak_equity`, `day_start_equity`, `last_equity`, `day_utc`, `emergency_stop`, `updated_at_utc`.
+Одна строка на пару `(exchange_id, quote_asset)`. Уникальный индекс `ux_paper_accounts_exchange_quote`. Колонки для запросов: `account_id`, `exchange_id`, `quote_asset`, `cash`, `peak_equity`, `day_start_equity`, `last_equity`, `day_utc`, `emergency_stop`, `updated_at_utc`.
 
-`jsonb`: `positions`, `marks`, `applied_exchange_trade_ids`. `SaveAsync` обновляет эту строку. `LoadAsync` возвращает `PaperState`.
+`jsonb`: `positions`, `marks`, `applied_exchange_trade_ids`, `applied_candle_keys` (по умолчанию `[]`). `SaveAsync` обновляет эту строку. `LoadAsync` возвращает `PaperState`. Если в базе уже есть старый счёт с той же парой, координатор продолжает его, а не создаёт второй. Две строки с одной парой миграция индекса не примет.
 
 ## Таблицы без конвейера
 
@@ -194,6 +194,8 @@ PK и FK `run_id` → `backtest_runs`. Колонки метрик отчёта:
 `DatabaseMigrator.ApplyAsync` вызывает `MigrateAsync`. Репозитории миграцию не запускают.
 
 `MultiExchangeMarketData` добавляет колонки `instruments` и `candles` и таблицу `candle_consumer_checkpoints`. Колонки не удаляются, миграция `Initial` не переписывается. Уже загруженные свечи и инструменты остаются на месте: `volume_unit` у старых свечей становится 1, контрактные поля старых инструментов остаются `null`.
+
+`20261127123818_IsolatePaperAccounts` добавляет `paper_accounts.applied_candle_keys`, `candle_consumer_checkpoints.skip_reason` и уникальный индекс `(exchange_id, quote_asset)`. Строки не удаляются. Обновление с `Initial` сохраняет уже записанные свечи Bybit.
 
 `Persistence:ApplyMigrationsOnStartup=true` включает hosted service. Он применяет миграции в `StartingAsync`, пишет в лог и пробрасывает исключение дальше, без строки подключения в сообщении. При `false` сервис ничего не делает.
 

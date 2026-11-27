@@ -178,7 +178,7 @@ docker compose stop postgres
 
 ## Bybit недоступен
 
-Процесс не останавливают. `/health/live` остаётся проверкой процесса, `/health/ready` остаётся проверкой PostgreSQL. Пока база здорова, неготовый WebSocket Bybit сам по себе приложение не валит. Отдельного маршрута `/health/feeds` в этой сборке нет. Адаптер OKX в процесс не входит, поэтому обрыв OKX здесь не диагностируется.
+Процесс не останавливают. `/health/live` остаётся проверкой процесса, `/health/ready` остаётся проверкой PostgreSQL. Пока база здорова, неготовый WebSocket сам по себе приложение не валит. `GET /health/feeds` показывает состояние подписок. Обрыв Bybit не останавливает OKX и не закрывает paper-позиции другой биржи.
 
 Новые paper-входы ждут свежих данных. Риск-менеджер отклоняет сигнал, пока рынок помечен устаревшим или биржа нездорова (`StaleMarketData`, `ExchangeUnhealthy`). Окно устаревания по умолчанию — `MarketData:StaleAfterSeconds` = 180. Уже записанные paper-позиции на биржу не отправляются и сами не закрываются.
 
@@ -197,3 +197,12 @@ docker compose restart cryptotrader
 ```
 
 Перезапуск не включает live и не удаляет том PostgreSQL. Готовность снова смотрят по `/health/ready`.
+
+## Ручная проверка публичного OKX
+
+В CI этого вызова нет. Ключ биржи не нужен и в запрос его не подставляют.
+
+1. `GET https://openapi.okx.com/api/v5/public/instruments?instType=SPOT` — в `data` есть `BTC-USDT`, `state` читается как есть.
+2. `GET https://openapi.okx.com/api/v5/market/ticker?instId=BTC-USDT` — `last` положительный.
+3. `GET https://openapi.okx.com/api/v5/market/books?instId=BTC-USDT&sz=50` — снимок, не доказанная непрерывная книга.
+4. После запуска стека с `Okx:Enabled=true` и подпиской `OKX` / `BTC-USDT` / `1m`: `GET /health/feeds` без ключа показывает подписку, `GET /api/v1/paper-accounts` с `X-Api-Key` показывает счёт OKX только после закрытой допустимой свечи. Приватные пути OKX не вызывают.
